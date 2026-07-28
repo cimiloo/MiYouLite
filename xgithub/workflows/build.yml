@@ -1,0 +1,30 @@
+name: Build MiYouLite
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Theos
+        run: |
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+
+      - name: Build
+        run: |
+          cd MiYouLite
+          make package
+          echo "DEB_PATH=$(find . -name '*.deb' | head -1)" >> $GITHUB_ENV
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: MiYouLite.deb
+          path: ${{ env.DEB_PATH }}
