@@ -1,3 +1,0 @@
-version: 2.1
-jobs:/n  build:/n    macos:/n      xcode: '15.0'
-    steps:/n      - checkout
