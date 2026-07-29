@@ -12,19 +12,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install dependencies (ldid, xz)
+        run: |
+          brew install ldid xz || true
+
       - name: Setup Theos
         run: |
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
-          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          set -e
+          git config --global http.postBuffer 524288000
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
 
       - name: Build
         run: |
-          cd MiYouLite
-          make package
-          echo "DEB_PATH=$(find . -name '*.deb' | head -1)" >> $GITHUB_ENV
+          set -e
+          cd "$GITHUB_WORKSPACE/MiYouLite"
+          make package FINALPACKAGE=1
+          DEB_FILE=$(find "$GITHUB_WORKSPACE/MiYouLite" -name '*.deb' | head -1)
+          echo "DEB_PATH=$DEB_FILE" >> "$GITHUB_ENV"
+          echo "DEB_NAME=$(basename "$DEB_FILE")" >> "$GITHUB_ENV"
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
         with:
-          name: MiYouLite.deb
+          name: ${{ env.DEB_NAME }}
           path: ${{ env.DEB_PATH }}
