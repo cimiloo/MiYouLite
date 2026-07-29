@@ -6,7 +6,7 @@
 
 @class PSSpecifier;
 
-// roothide-theos SDK 不含 Preferences 私有头 → 提供最小本地声明（仅声明用到的方法）
+// roothide-theos SDK 不含 Preferences 私有头 → 提供最小本地声明
 @interface PSListController : UIViewController
 - (NSString *)specifierPlistName;
 - (NSArray *)specifiers;
@@ -18,9 +18,14 @@
 @interface PSSpecifier : NSObject
 @property (nonatomic, copy) NSString *identifier;
 @property (nonatomic, retain) id propertyDictionary;
+// roothide PL 在 specifier 上存 bundle 引用的 key
+- (id)propertyForKey:(NSString *)key;
 @end
 
 static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
+// roothide PreferenceLoader 存储 bundle 路径的 property key（与 prefs.xm 源码一致）
+static NSString *const PLBundleKey = @"pl_bundle";
+static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
 
 @interface MiYouLitePrefsController : PSListController
 @end
@@ -33,20 +38,64 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
     MYLLog(@"controller class loaded: %@", NSStringFromClass(self));
 }
 
-// 强制使用 Root.plist（原生解析，字符串 cell 类型由系统正确处理）
+// ═══════════════════════════════════════════════
+// ★★★ 关键修复 ★★★
+// roothide 的 PLCustomListController 重写了此方法返回正确的 NSBundle。
+// 我们的子类也必须重写，否则 [self bundle] 返回 nil/错误 →
+// PSListController 找不到 Resources/Root.plist → 空白页！
+// ═══════════════════════════════════════════════
+- (NSBundle *)bundle {
+    // 优先从 specifier 取 PL 存的 lazy-load bundle 路径
+    PSSpecifier *spec = [self valueForKey:@"_specifier"];  // PSListController 内部 ivar
+    if (spec) {
+        // 尝试 PSLazilyLoadedBundleKey（PL 对 isController+isBundle 条目设的）
+        id lazyPath = [spec propertyForKey:PSLazilyLoadedBundleKey];
+        if (lazyPath) {
+            NSBundle *b = [NSBundle bundleWithPath:lazyPath];
+            if (b) {
+                MYLLog(@"bundle from PSLazilyLoadedBundleKey: %@", b);
+                return b;
+            }
+        }
+        // 尝试 PLBundleKey（PLCustomListController 用的方式）
+        id plBundle = [spec propertyForKey:PLBundleKey];
+        if ([plBundle isKindOfClass:[NSBundle class]]) {
+            MYLLog(@"bundle from PLBundleKey: %@", plBundle);
+            return plBundle;
+        }
+    }
+
+    // 兜底：直接按已知路径加载
+    NSBundle *direct = [NSBundle bundleWithPath:@"/Library/PreferenceBundles/MiYouLitePrefs.bundle"];
+    if (direct && [direct isLoaded]) {
+        MYLLog(@"bundle from direct path (loaded): %@", direct);
+        return direct;
+    }
+    direct = [NSBundle bundleWithPath:@"/Library/PreferenceBundles/MiYouLitePrefs.bundle"];
+    if (direct) {
+        MYLLog(@"bundle from direct path: %@", direct);
+        return direct;
+    }
+
+    MYLLog(@"WARNING: all bundle resolution failed, falling back to super");
+    return [super bundle];
+}
+
+// 告诉 PSListController 用 Root.plist 驱动 UI
 - (NSString *)specifierPlistName {
     return @"Root";
 }
 
-// 仅做计数日志，不改变父类行为
+// 日志透传，不改变行为
 - (NSArray *)specifiers {
     NSArray *s = [super specifiers];
-    MYLLog(@"specifiers count = %lu", (unsigned long)s.count);
+    MYLLog(@"specifiers count = %lu, bundle=%@",
+           (unsigned long)s.count, [self bundle]);
     return s;
 }
 
 - (void)viewDidLoad {
-    MYLLog(@"viewDidLoad");
+    MYLLog(@"viewDidLoad, bundle=%@", [self bundle]);
     [super viewDidLoad];
 }
 
@@ -67,7 +116,7 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
     [super reloadSpecifiers];
 }
 
-// ── 默认 get/set 回调（plist 中带 key 且无显式 set/get 时由 PSListController 自动调用）──
+// ── 默认 get/set 回调 ──
 - (id)readPreferenceValue:(PSSpecifier *)specifier {
     NSString *key = specifier.identifier ?: specifier.propertyDictionary[@"key"];
     if (!key) return nil;

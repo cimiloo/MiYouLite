@@ -12,7 +12,7 @@
 		<true/>
 		<key>bundle</key>
 		<string>MiYouLitePrefs</string>
-		<key>details</key>
+		<key>detail</key>
 		<string>MiYouLitePrefsController</string>
 	</dict>
 </dict>
