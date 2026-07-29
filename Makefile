@@ -15,7 +15,7 @@ include $(THEOS_MAKE_PATH)/tweak.mk
 # 说明：roothide-theos 的 bundle.mk 链接存在 object 收集 bug（链接时丢源文件 object），
 # 故改用链接可靠的 library.mk（与 tweak.mk 同底层），手动组装 .bundle。
 LIBRARY_NAME = MiYouLitePrefs
-MiYouLitePrefs_FILES = prefs/MiYouLitePrefs.m
+MiYouLitePrefs_FILES = MiYouLitePrefs.m
 MiYouLitePrefs_CFLAGS = -fobjc-arc
 MiYouLitePrefs_FRAMEWORKS = UIKit Foundation
 MiYouLitePrefs_INSTALL_PATH = /Library/PreferenceBundles/MiYouLitePrefs.bundle
