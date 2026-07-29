@@ -8,6 +8,7 @@ TWEAK_NAME = MiYouLite
 MiYouLite_FILES = Tweak.xm
 MiYouLite_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 MiYouLite_FRAMEWORKS = UIKit Foundation
+MiYouLite_LIBRARIES = substrate
 MiYouLite_PRIVATE_FRAMEWORKS = 
 
 include $(THEOS_MAKE_PATH)/tweak.mk
