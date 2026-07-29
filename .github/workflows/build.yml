@@ -31,20 +31,19 @@ jobs:
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
-          # 清空旧产物，避免 theos 把历史 deb 留在 packages/ 被误选
+          # 清掉所有可能残留的旧 deb，避免 find 捞到过时版本
           rm -rf packages
+          find "$GITHUB_WORKSPACE" -maxdepth 2 -name '*.deb' -delete || true
           make package FINALPACKAGE=1
-          echo "=== 构建后 packages 目录内容 ==="
-          find "$GITHUB_WORKSPACE/packages" -name '*.deb' -exec ls -l {} \;
-          # 直接从 control 推导 deb 文件名，确保版本号与 control 一致
-          PKG=$(grep '^Package:' control | awk '{print $2}')
-          VER=$(grep '^Version:' control | awk '{print $2}')
-          ARCH=$(grep '^Architecture:' control | awk '{print $2}')
-          DEB_NAME="${PKG}_${VER}_${ARCH}.deb"
-          DEB_PATH="$GITHUB_WORKSPACE/packages/$DEB_NAME"
-          ls -l "$DEB_PATH"
-          echo "DEB_PATH=$DEB_PATH" >> "$GITHUB_ENV"
-          echo "DEB_NAME=$DEB_NAME" >> "$GITHUB_ENV"
+          DEB_FILE=$(find "$GITHUB_WORKSPACE/packages" -name '*.deb' | head -1)
+          if [ -z "$DEB_FILE" ]; then
+            echo "ERROR: no deb produced under packages/"
+            find "$GITHUB_WORKSPACE" -maxdepth 3 -name '*.deb'
+            exit 1
+          fi
+          ls -l "$DEB_FILE"
+          echo "DEB_PATH=$DEB_FILE" >> "$GITHUB_ENV"
+          echo "DEB_NAME=$(basename "$DEB_FILE")" >> "$GITHUB_ENV"
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
@@ -52,34 +51,14 @@ jobs:
           name: ${{ env.DEB_NAME }}
           path: ${{ env.DEB_PATH }}
 
-      - name: Remove old release assets (tag: latest)
+      - name: Publish to GitHub Release (latest)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          REL_ID=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/latest" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
-          if [ -n "$REL_ID" ]; then
-            ASSET_IDS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/releases/$REL_ID/assets" \
-              | python3 -c "import sys,json; print(' '.join(str(a['id']) for a in json.load(sys.stdin)))")
-            for AID in $ASSET_IDS; do
-              curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
-                "https://api.github.com/repos/${{ github.repository }}/releases/assets/$AID"
-              echo "deleted old asset $AID"
-            done
-          fi
-
-      - name: Publish to GitHub Release (latest)
-        uses: ncipollo/release-action@v1
-        with:
-          allowUpdates: true
-          removeArtifacts: true
-          tag: latest
-          name: Latest Build
-          body: |
-            Auto-built from ${{ github.sha }}
-            Commit: ${{ github.event.head_commit.message }}
-          artifacts: ${{ env.DEB_PATH }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          cd "$GITHUB_WORKSPACE"
+          # 删除旧的 latest 发布（连同其资产），保证 Release 里只有干净的新版本
+          gh release delete latest --yes || true
+          gh release create latest "$DEB_PATH" \
+            --title "Latest Build" \
+            --notes "Auto-built from ${{ github.sha }} (${{ env.DEB_NAME }})"
