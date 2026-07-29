@@ -28,6 +28,7 @@ jobs:
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
+          mkdir -p packages
           make package FINALPACKAGE=1
           DEB_FILE=$(find "$GITHUB_WORKSPACE" -name '*.deb' | head -1)
           echo "DEB_PATH=$DEB_FILE" >> "$GITHUB_ENV"
