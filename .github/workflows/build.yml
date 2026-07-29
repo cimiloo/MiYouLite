@@ -31,17 +31,45 @@ jobs:
         run: |
           set -e
           cd "$GITHUB_WORKSPACE"
-          mkdir -p packages
+          # 清空旧产物，避免 theos 把历史 deb 留在 packages/ 被误选
+          rm -rf packages
           make package FINALPACKAGE=1
-          DEB_FILE=$(find "$GITHUB_WORKSPACE" -name '*.deb' | head -1)
-          echo "DEB_PATH=$DEB_FILE" >> "$GITHUB_ENV"
-          echo "DEB_NAME=$(basename "$DEB_FILE")" >> "$GITHUB_ENV"
+          echo "=== 构建后 packages 目录内容 ==="
+          find "$GITHUB_WORKSPACE/packages" -name '*.deb' -exec ls -l {} \;
+          # 直接从 control 推导 deb 文件名，确保版本号与 control 一致
+          PKG=$(grep '^Package:' control | awk '{print $2}')
+          VER=$(grep '^Version:' control | awk '{print $2}')
+          ARCH=$(grep '^Architecture:' control | awk '{print $2}')
+          DEB_NAME="${PKG}_${VER}_${ARCH}.deb"
+          DEB_PATH="$GITHUB_WORKSPACE/packages/$DEB_NAME"
+          ls -l "$DEB_PATH"
+          echo "DEB_PATH=$DEB_PATH" >> "$GITHUB_ENV"
+          echo "DEB_NAME=$DEB_NAME" >> "$GITHUB_ENV"
 
       - name: Upload deb
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.DEB_NAME }}
           path: ${{ env.DEB_PATH }}
+
+      - name: Remove old release assets (tag: latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          REL_ID=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/latest" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
+          if [ -n "$REL_ID" ]; then
+            ASSET_IDS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/$REL_ID/assets" \
+              | python3 -c "import sys,json; print(' '.join(str(a['id']) for a in json.load(sys.stdin)))")
+            for AID in $ASSET_IDS; do
+              curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/${{ github.repository }}/releases/assets/$AID"
+              echo "deleted old asset $AID"
+            done
+          fi
 
       - name: Publish to GitHub Release (latest)
         uses: ncipollo/release-action@v1

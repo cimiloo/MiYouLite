@@ -244,7 +244,7 @@ static void MiYouLiteSettingsChanged(CFNotificationCenterRef center,
 
 %ctor {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-    MYLLog(@"tweak loaded, version=1.2.3, process=%@", bid ?: @"(unknown)");
+    MYLLog(@"tweak loaded, version=1.2.4, process=%@", bid ?: @"(unknown)");
     Class sessionMgrClass = objc_getClass("MMNewSessionMgr");
     if (sessionMgrClass) {
         Method mCount = class_getInstanceMethod(sessionMgrClass, @selector(GetSessionCount));
