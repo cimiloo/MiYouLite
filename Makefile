@@ -6,7 +6,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = MiYouLite
 
 MiYouLite_FILES = Tweak.xm
-MiYouLite_CFLAGS = -fobjc-arc
+MiYouLite_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 MiYouLite_FRAMEWORKS = UIKit Foundation
 MiYouLite_PRIVATE_FRAMEWORKS = 
 
