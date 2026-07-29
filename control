@@ -1,9 +1,9 @@
 Package: com.miyou.lite
 Name: MiYouLite
-Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 14.0)
-Version: 1.1.0
-Architecture: iphoneos-arm64
-Description: Lite version - 防撤回 + 密友隐藏
+Depends: roothide (>= 1.0)
+Version: 1.2.0
+Architecture: iphoneos-arm64e
+Description: Lite version - 防撤回 + 密友隐藏 (roothide)
 Maintainer: MiYou
 Author: MiYou
 Section: Tweaks

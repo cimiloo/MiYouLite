@@ -1,5 +1,6 @@
-export TARGET = iphone:clang::14.0
-export ARCHS = arm64
+export TARGET = iphone:clang:latest:15.0
+export ARCHS = arm64 arm64e
+export THEOS_PACKAGE_SCHEME = roothide
 
 include $(THEOS)/makefiles/common.mk
 
@@ -8,8 +9,6 @@ TWEAK_NAME = MiYouLite
 MiYouLite_FILES = Tweak.xm
 MiYouLite_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 MiYouLite_FRAMEWORKS = UIKit Foundation
-MiYouLite_LIBRARIES = substrate
-MiYouLite_PRIVATE_FRAMEWORKS = 
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 

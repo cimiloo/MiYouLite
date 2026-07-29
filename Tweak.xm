@@ -5,7 +5,7 @@
 
 #pragma mark - 配置管理器（本地 plist 持久化隐藏列表/密码）
 
-static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/com.miyou.lite.plist";
+static NSString *const kMiYouLitePlistPath = @"/var/jb/var/mobile/Library/Preferences/com.miyou.lite.plist";
 
 @interface MiYouLiteManager : NSObject
 + (instancetype)sharedManager;
@@ -222,7 +222,11 @@ static id MiYouLite_GetSessionAtIndex(id self, SEL _cmd, int arg1) {
 #pragma mark - 构造函数：安装 MMNewSessionMgr 手动 hook
 
 %ctor {
+<<<<<<< HEAD
     NSLog(@"[MiYouLite] 插件已加载 - 版本 1.1.0 (微信 8.0.75)");
+=======
+    NSLog(@"[MiYouLite] 插件已加载 - 版本 1.2.0 roothide (微信 8.0.75)");
+>>>>>>> 1711edd (build: 改为 roothide 方案 (arm64e + THEOS_PACKAGE_SCHEME=roothide))
     Class sessionMgrClass = objc_getClass("MMNewSessionMgr");
     if (sessionMgrClass) {
         Method mCount = class_getInstanceMethod(sessionMgrClass, @selector(GetSessionCount));
