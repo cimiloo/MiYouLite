@@ -6,6 +6,8 @@
 // roothide-theos SDK 不含 Preferences 私有头，提供 PSListController 最小本地声明。
 // 运行期使用系统真实的 PSListController（动态派发）。
 @interface PSListController : UIViewController
+// iOS 全版本：viewDidLoad 时调此方法填充内部 _specifiers ivar（关键！不能只在子类 getter 里缓存）
+- (NSArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
 - (void)reloadSpecifiers;
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier;
 - (id)readPreferenceValue:(PSSpecifier *)specifier;
@@ -26,54 +28,67 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 
 @implementation MiYouLitePrefsController {
     BOOL _authed;
-    NSMutableArray *_specs;
+    NSArray *_builtSpecs;   // 构建结果缓存，避免重复构建
 }
 
-// ── 纯代码构建 specifiers（不依赖 loadSpecifiersFromPlistName: / bundle 资源查找）──
+// ── 关键修复：重写 loadSpecifiersFromPlistName:target: 返回代码构建的数组 ──
+// iOS 16 的 PSListController 在 viewDidLoad 时调用它来填充内部 _specifiers ivar；
+// 子类若只在自己的 specifiers getter 里缓存，父类的 _specifiers 永远是 nil → 空白页。
+// 重写此方法，父类就能拿到我们的 specifiers 并正确填充 _specifiers。
+// ── specifiers getter（双保险）：走父类 getter（其内部会调 loadSpecifiersFromPlistName: 填充 _specifiers）；
+// 若父类路径未填充（极端情况），兜底构建并通过 KVC 同步到父类 _specifiers ivar。──
 - (NSArray *)specifiers {
-    if (!_specs) {
-        _specs = [NSMutableArray array];
+    if (_builtSpecs) return _builtSpecs;
 
-        // 分组头：功能开关
-        [_specs addObject:[self groupSpecWithLabel:@"功能开关"
-                                           footer:@"防撤回：拦截对方撤回消息。密友隐藏：在列表/通讯录中隐藏指定联系人，需配合下方密码使用。"]];
-
-        // 开关：防撤回
-        [_specs addObject:[self switchSpecWithLabel:@"防撤回"
-                                               key:@"antiRevokeEnabled"
-                                            default:NO]];
-
-        // 开关：密友隐藏
-        [_specs addObject:[self switchSpecWithLabel:@"密友隐藏"
-                                               key:@"hideModeEnabled"
-                                            default:NO]];
-
-        // 分组头：密友列表
-        [_specs addObject:[self groupSpecWithLabel:@"密友列表"
-                                           footer:@"每行填一个 wxid（如 wxid_xxxxxx），隐藏后该联系人的会话与通讯录入口将不显示。多个 wxid 换行分隔。"]];
-
-        // 文本输入：密友 wxid
-        [_specs addObject:[self textSpecWithLabel:@"密友 wxid"
-                                              key:@"hiddenFriends"
-                                          default:@""]];
-
-        // 分组头：密码保护
-        [_specs addObject:[self groupSpecWithLabel:@"密码保护"
-                                           footer:@"设置密码后，进入本设置页需先验证。留空可清除密码保护。忘记密码请重装插件。"]];
-
-        // 按钮：设置/修改密码
-        [_specs addObject:[self buttonSpecWithLabel:@"设置 / 修改密码"
-                                             action:@selector(setPassword:)]];
-
-        // 按钮：移除密码
-        [_specs addObject:[self buttonSpecWithLabel:@"移除密码"
-                                             action:@selector(removePassword:)]];
-
-        // 底部信息
-        [_specs addObject:[self groupSpecWithLabel:nil
-                                           footer:@"MiYouLite 1.2.2 · roothide · 微信 8.0.75"]];
+    NSArray *parentSpecs = [super specifiers];
+    if (parentSpecs.count > 0) {
+        _builtSpecs = parentSpecs;
+        return _builtSpecs;
     }
-    return _specs;
+
+    _builtSpecs = [self buildSpecifiers];
+    // KVC 同步到父类 _specifiers ivar（iOS 16 直接读 ivar 的场景）
+    @try { [self setValue:_builtSpecs forKey:@"specifiers"]; }
+    @catch (NSException *e) { /* 父类无此 ivar/setter 时忽略 */ }
+    return _builtSpecs;
+}
+
+// 实际构建代码（单一数据源）
+- (NSArray *)buildSpecifiers {
+    NSMutableArray *specs = [NSMutableArray array];
+
+    [specs addObject:[self groupSpecWithLabel:@"功能开关"
+                                       footer:@"防撤回：拦截对方撤回消息。密友隐藏：在列表/通讯录中隐藏指定联系人，需配合下方密码使用。"]];
+
+    [specs addObject:[self switchSpecWithLabel:@"防撤回" key:@"antiRevokeEnabled" default:NO]];
+    [specs addObject:[self switchSpecWithLabel:@"密友隐藏" key:@"hideModeEnabled" default:NO]];
+
+    [specs addObject:[self groupSpecWithLabel:@"密友列表"
+                                       footer:@"每行填一个 wxid（如 wxid_xxxxxx），隐藏后该联系人的会话与通讯录入口将不显示。多个 wxid 换行分隔。"]];
+
+    [specs addObject:[self textSpecWithLabel:@"密友 wxid" key:@"hiddenFriends" default:@""]];
+
+    [specs addObject:[self groupSpecWithLabel:@"密码保护"
+                                       footer:@"设置密码后，进入本设置页需先验证。留空可清除密码保护。忘记密码请重装插件。"]];
+
+    [specs addObject:[self buttonSpecWithLabel:@"设置 / 修改密码" action:@selector(setPassword:)]];
+    [specs addObject:[self buttonSpecWithLabel:@"移除密码" action:@selector(removePassword:)]];
+
+    [specs addObject:[self groupSpecWithLabel:nil
+                                       footer:@"MiYouLite 1.2.2 · roothide · 微信 8.0.75"]];
+
+    return specs;
+}
+
+// 保留 loadSpecifiersFromPlistName: 重载（父类标准加载路径会走到这里）
+- (NSArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target {
+    if (!_builtSpecs) _builtSpecs = [self buildSpecifiers];
+    return _builtSpecs;
+}
+
+// 密码验证通过后刷新（父类会重新走 loadSpecifiersFromPlistName:）
+- (void)reloadSpecifiers {
+    [super reloadSpecifiers];
 }
 
 // ── 密码验证（进入页面时触发）──
@@ -89,7 +104,7 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
     }
 }
 
-// ── Specifier 工厂方法 ──
+// ── Specifier 工厂方法（target 必须是 self，按钮 action 才能派发到本类）──
 
 - (PSSpecifier *)groupSpecWithLabel:(NSString *)label footer:(NSString *)footer {
     PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:label
@@ -169,11 +184,9 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
         kCFPreferencesAnyHost);
 
     if (!val) {
-        // 返回 default 值
         id defVal = specifier.propertyDictionary[@"default"];
         return defVal ?: @"";
     }
-
     return (__bridge_transfer id)val;
 }
 
@@ -193,7 +206,6 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
         kCFPreferencesCurrentUser,
         kCFPreferencesAnyHost);
 
-    // 通知 Tweak 侧配置变更
     CFNotificationCenterPostNotification(
         CFNotificationCenterGetDarwinNotifyCenter(),
         CFSTR("com.miyou.lite/settings-changed"),
@@ -256,11 +268,6 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
         [self reloadSpecifiers];
     }]];
     [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (void)reloadSpecifiers {
-    _specs = nil;
-    [super reloadSpecifiers];
 }
 
 // ── 移除密码按钮回调 ──
