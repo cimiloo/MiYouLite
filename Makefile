@@ -18,6 +18,9 @@ LIBRARY_NAME = MiYouLitePrefs
 MiYouLitePrefs_FILES = MiYouLitePrefs.m
 MiYouLitePrefs_CFLAGS = -fobjc-arc
 MiYouLitePrefs_FRAMEWORKS = UIKit Foundation
+# PSListController 的真实实现在设备端的 Preferences 私有框架(roothide SDK 不含其 stub)，
+# 该 bundle 由 Preferences.app 加载，运行时必然存在；故让链接器对未定义符号做动态查找。
+MiYouLitePrefs_LDFLAGS = -Wl,-undefined,dynamic_lookup
 MiYouLitePrefs_INSTALL_PATH = /Library/PreferenceBundles/MiYouLitePrefs.bundle
 MiYouLitePrefs_LIBRARY_EXTENSION = -
 include $(THEOS_MAKE_PATH)/library.mk
