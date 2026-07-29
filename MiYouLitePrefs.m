@@ -8,6 +8,7 @@
 @interface PSListController : UIViewController
 // iOS 全版本：viewDidLoad 时调此方法填充内部 _specifiers ivar（关键！不能只在子类 getter 里缓存）
 - (NSArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
+- (NSArray *)specifiers;
 - (void)reloadSpecifiers;
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier;
 - (id)readPreferenceValue:(PSSpecifier *)specifier;
