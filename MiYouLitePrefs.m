@@ -12,8 +12,9 @@
 @end
 
 // PSSpecifier 创建辅助（避免依赖私有头）
+// 真实签名：+ (id)preferenceSpecifierNamed:(id) target:(id) set:(SEL) get:(SEL) detail:(Class) cell:(id) edit:(long long)
 @interface PSSpecifier : NSObject
-+ (instancetype)preferenceSpecifierNamed:(NSString *)name target:(id)set get:(SEL)get set:(SEL)set detail:(Class)detail cell:(NSString *)cellType edit:(NSInteger)edit;
++ (id)preferenceSpecifierNamed:(NSString *)name target:(id)target set:(SEL)set get:(SEL)get detail:(Class)detail cell:(NSString *)cellType edit:(NSInteger)edit;
 @property (nonatomic, copy) NSString *identifier;
 @property (nonatomic, retain) id propertyDictionary;
 @end
@@ -93,8 +94,8 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 - (PSSpecifier *)groupSpecWithLabel:(NSString *)label footer:(NSString *)footer {
     PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:label
                                                        target:self
-                                                          get:NULL
                                                           set:NULL
+                                                          get:NULL
                                                         detail:Nil
                                                          cell:@"PSGroupCell"
                                                          edit:0];
@@ -108,8 +109,8 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 - (PSSpecifier *)switchSpecWithLabel:(NSString *)label key:(NSString *)key default:(BOOL)defVal {
     PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:label
                                                        target:self
-                                                          get:@selector(readPreferenceValue:)
                                                           set:@selector(setPreferenceValue:specifier:)
+                                                          get:@selector(readPreferenceValue:)
                                                         detail:Nil
                                                          cell:@"PSSwitchCell"
                                                          edit:0];
@@ -126,8 +127,8 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 - (PSSpecifier *)textSpecWithLabel:(NSString *)label key:(NSString *)key default:(NSString *)defVal {
     PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:label
                                                        target:self
-                                                          get:@selector(readPreferenceValue:)
                                                           set:@selector(setPreferenceValue:specifier:)
+                                                          get:@selector(readPreferenceValue:)
                                                         detail:Nil
                                                          cell:@"PSEditTextViewCell"
                                                          edit:0];
