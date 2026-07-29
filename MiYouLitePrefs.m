@@ -1,6 +1,8 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
-#import <Preferences/Preferences.h>
+
+// roothide SDK 不含 Preferences 私有头，用前向声明即可（PSListController 运行期由系统提供）
+@class PSListController;
 
 // 与 Tweak 端、设置 app 共享的偏好域（由系统标准 API 读写，三方天然同步）
 static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
