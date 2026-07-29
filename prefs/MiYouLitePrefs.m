@@ -1,8 +1,14 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-// roothide SDK 不含 Preferences 私有头，用前向声明即可（PSListController 运行期由系统提供）
-@class PSListController;
+@class PSSpecifier;
+
+// roothide-theos 自带 SDK 不含 Preferences 私有头，这里提供 PSListController 的最小本地声明以通过编译。
+// 运行期使用系统真实的 PSListController（其方法/属性均存在，动态派发）。
+@interface PSListController : UIViewController
+- (NSArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
+- (void)reloadSpecifiers;
+@end
 
 // 与 Tweak 端、设置 app 共享的偏好域（由系统标准 API 读写，三方天然同步）
 static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
@@ -11,14 +17,15 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 @end
 
 @implementation MiYouLitePrefsController {
-    BOOL _authed; // 已通过密码验证
+    BOOL _authed;          // 已通过密码验证
+    NSArray *_mySpecifiers; // 自带 ivar，避免与父类 _specifiers 布局冲突
 }
 
 - (NSArray *)specifiers {
-    if (!_specifiers) {
-        _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
+    if (!_mySpecifiers) {
+        _mySpecifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
     }
-    return _specifiers;
+    return _mySpecifiers;
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -64,7 +71,7 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 
 // 重载 specifiers（验证成功后调用，确保显示实时状态）
 - (void)reloadSpecifiers {
-    _specifiers = nil;
+    _mySpecifiers = nil;
     [super reloadSpecifiers];
 }
 
