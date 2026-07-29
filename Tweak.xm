@@ -88,7 +88,11 @@ static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/c
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"MiYouLite";
-    self.view.backgroundColor = [UIColor groupTableViewBackgroundColor];
+    if (@available(iOS 13.0, *)) {
+        self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
+    } else {
+        self.view.backgroundColor = [UIColor groupTableViewBackgroundColor];
+    }
     
     self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleGrouped];
     self.tableView.delegate = self;
