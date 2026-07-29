@@ -5,6 +5,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-latest
@@ -39,3 +42,16 @@ jobs:
         with:
           name: ${{ env.DEB_NAME }}
           path: ${{ env.DEB_PATH }}
+
+      - name: Publish to GitHub Release (latest)
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          removeArtifacts: true
+          tag: latest
+          name: Latest Build
+          body: |
+            Auto-built from ${{ github.sha }}
+            Commit: ${{ github.event.head_commit.message }}
+          artifacts: ${{ env.DEB_PATH }}
+          token: ${{ secrets.GITHUB_TOKEN }}
