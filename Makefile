@@ -11,19 +11,9 @@ MiYouLite_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 MiYouLite_FRAMEWORKS = UIKit Foundation
 include $(THEOS_MAKE_PATH)/tweak.mk
 
-# ── 设置面板：用 library.mk 构建成动态库，再与 Layout 里的 Info.plist/Root.plist 组成 MiYouLitePrefs.bundle ──
-# 说明：roothide-theos 的 bundle.mk 链接存在 object 收集 bug（链接时丢源文件 object），
-# 故改用链接可靠的 library.mk（与 tweak.mk 同底层），手动组装 .bundle。
-LIBRARY_NAME = MiYouLitePrefs
-MiYouLitePrefs_FILES = MiYouLitePrefs.m
-MiYouLitePrefs_CFLAGS = -fobjc-arc
-MiYouLitePrefs_FRAMEWORKS = UIKit Foundation
-# PSListController 的真实实现在设备端的 Preferences 私有框架(roothide SDK 不含其 stub)，
-# 该 bundle 由 Preferences.app 加载，运行时必然存在；故让链接器对未定义符号做动态查找。
-MiYouLitePrefs_LDFLAGS = -Wl,-undefined,dynamic_lookup
-MiYouLitePrefs_INSTALL_PATH = /Library/PreferenceBundles/MiYouLitePrefs.bundle
-MiYouLitePrefs_LIBRARY_EXTENSION = -
-include $(THEOS_MAKE_PATH)/library.mk
+# ── 设置面板子工程：标准 bundle.mk 构建真正的 NSBundle（preferences/ 目录）──
+SUBPROJECTS = preferences
+include $(THEOS_MAKE_PATH)/aggregate.mk
 
 after-install::
 	install.exec "killall -9 WeChat"
