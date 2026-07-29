@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>title</key>
+	<string>MiYouLite</string>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>功能开关</string>
+			<key>footerText</key>
+			<string>防撤回：拦截对方撤回消息。密友隐藏：在列表/通讯录中隐藏指定联系人，需配合下方密码使用。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>防撤回</string>
+			<key>key</key>
+			<string>antiRevokeEnabled</string>
+			<key>default</key>
+			<false/>
+			<key>PostNotification</key>
+			<string>com.miyou.lite/settings-changed</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>密友隐藏</string>
+			<key>key</key>
+			<string>hideModeEnabled</string>
+			<key>default</key>
+			<false/>
+			<key>PostNotification</key>
+			<string>com.miyou.lite/settings-changed</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>密友列表</string>
+			<key>footerText</key>
+			<string>每行填一个 wxid（如 wxid_xxxxxx），隐藏后该联系人的会话与通讯录入口将不显示。多个 wxid 换行分隔。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSEditTextViewCell</string>
+			<key>label</key>
+			<string>密友 wxid</string>
+			<key>key</key>
+			<string>hiddenFriends</string>
+			<key>default</key>
+			<string></string>
+			<key>PostNotification</key>
+			<string>com.miyou.lite/settings-changed</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>密码保护</string>
+			<key>footerText</key>
+			<string>设置密码后，进入本设置页需先验证。留空可清除密码保护。忘记密码请重装插件。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>设置 / 修改密码</string>
+			<key>action</key>
+			<string>setPassword:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>移除密码</string>
+			<key>action</key>
+			<string>removePassword:</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>footerText</key>
+			<string>MiYouLite 1.2.2 · roothide · 微信 8.0.75</string>
+		</dict>
+	</array>
+</dict>
+</plist>

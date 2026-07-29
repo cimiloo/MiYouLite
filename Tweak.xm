@@ -3,22 +3,19 @@
 #import <objc/runtime.h>
 #import <substrate.h>
 
-#pragma mark - 配置管理器（本地 plist 持久化隐藏列表/密码）
+#pragma mark - 配置管理器（CFPreferences 标准域，与设置 app 共享）
 
-static NSString *const kMiYouLitePlistPath = @"/var/jb/var/mobile/Library/Preferences/com.miyou.lite.plist";
+static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 
 @interface MiYouLiteManager : NSObject
 + (instancetype)sharedManager;
 @property (nonatomic, assign) BOOL antiRevokeEnabled;
 @property (nonatomic, assign) BOOL hideModeEnabled;
 @property (nonatomic, strong) NSString *password;
-@property (nonatomic, strong) NSMutableArray *hiddenFriends; // wxid 列表
-@property (nonatomic, strong) NSMutableArray *hiddenRooms;   // room id 列表
-@property (nonatomic, assign) BOOL isUnlocked;               // 密码验证通过后为 YES
-- (BOOL)isFriendHidden:(NSString *)usrName;
-- (BOOL)isRoomHidden:(NSString *)roomName;
-- (void)save;
-- (void)load;
+@property (nonatomic, strong) NSArray *hiddenFriends; // wxid 列表（单聊/群均按 wxid 隐藏）
+@property (nonatomic, assign) BOOL isUnlocked;         // 搜索框密码验证通过后为 YES
+- (BOOL)isHidden:(NSString *)usrName;
+- (void)reload;
 @end
 
 @implementation MiYouLiteManager
@@ -27,56 +24,50 @@ static NSString *const kMiYouLitePlistPath = @"/var/jb/var/mobile/Library/Prefer
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         instance = [[MiYouLiteManager alloc] init];
-        [instance load];
+        [instance reload];
     });
     return instance;
 }
 - (instancetype)init {
     self = [super init];
-    if (self) {
-        _hiddenFriends = [NSMutableArray array];
-        _hiddenRooms = [NSMutableArray array];
-        _isUnlocked = NO;
-    }
+    if (self) { _isUnlocked = NO; }
     return self;
 }
-- (void)load {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:kMiYouLitePlistPath];
-    if (dict) {
-        self.antiRevokeEnabled = [dict[@"antiRevokeEnabled"] boolValue];
-        self.hideModeEnabled   = [dict[@"hideModeEnabled"] boolValue];
-        self.password          = dict[@"password"] ?: @"";
-        self.hiddenFriends     = [NSMutableArray arrayWithArray:dict[@"hiddenFriends"] ?: @[]];
-        self.hiddenRooms       = [NSMutableArray arrayWithArray:dict[@"hiddenRooms"] ?: @[]];
+- (void)reload {
+    CFStringRef domain = (__bridge CFStringRef)kMiYouLiteDomain;
+    CFPropertyListRef v;
+    v = CFPreferencesCopyValue(CFSTR("antiRevokeEnabled"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    _antiRevokeEnabled = (v && CFGetTypeID(v) == CFBooleanGetTypeID()) ? (BOOL)CFBooleanGetValue((CFBooleanRef)v) : NO;
+    if (v) CFRelease(v);
+    v = CFPreferencesCopyValue(CFSTR("hideModeEnabled"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    _hideModeEnabled = (v && CFGetTypeID(v) == CFBooleanGetTypeID()) ? (BOOL)CFBooleanGetValue((CFBooleanRef)v) : NO;
+    if (v) CFRelease(v);
+    v = CFPreferencesCopyValue(CFSTR("password"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    _password = (v && CFGetTypeID(v) == CFStringGetTypeID()) ? (__bridge_transfer NSString *)v : @"";
+    if (v && CFGetTypeID(v) != CFStringGetTypeID()) CFRelease(v);
+    // hiddenFriends 在设置 app 中以换行分隔的字符串存储，这里转为数组
+    v = CFPreferencesCopyValue(CFSTR("hiddenFriends"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    NSString *raw = (v && CFGetTypeID(v) == CFStringGetTypeID()) ? (__bridge_transfer NSString *)v : @"";
+    if (v && CFGetTypeID(v) != CFStringGetTypeID()) CFRelease(v);
+    NSMutableArray *arr = [NSMutableArray array];
+    for (NSString *line in [raw componentsSeparatedByString:@"\n"]) {
+        NSString *t = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (t.length > 0) [arr addObject:t];
     }
+    _hiddenFriends = arr;
 }
-- (void)save {
-    NSDictionary *dict = @{
-        @"antiRevokeEnabled": @(self.antiRevokeEnabled),
-        @"hideModeEnabled":   @(self.hideModeEnabled),
-        @"password":          self.password ?: @"",
-        @"hiddenFriends":     self.hiddenFriends ?: @[],
-        @"hiddenRooms":       self.hiddenRooms ?: @[]
-    };
-    [dict writeToFile:kMiYouLitePlistPath atomically:YES];
-}
-- (BOOL)isFriendHidden:(NSString *)usrName {
+- (BOOL)isHidden:(NSString *)usrName {
     if (!self.hideModeEnabled || self.isUnlocked) return NO;
     return [self.hiddenFriends containsObject:usrName ?: @""];
 }
-- (BOOL)isRoomHidden:(NSString *)roomName {
-    if (!self.hideModeEnabled || self.isUnlocked) return NO;
-    return [self.hiddenRooms containsObject:roomName ?: @""];
-}
 @end
 
-// 监听解锁后刷新会话列表
+// 监听设置变更后刷新会话列表
 static void MiYouLiteForceReloadSessions(void) {
     Class cls = objc_getClass("MMNewSessionMgr");
     if (!cls) return;
     id mgr = [cls performSelector:@selector(getSessionMgr)] ?: nil;
     if (!mgr) {
-        // 退而求其次：直接发通知让微信自己刷新
         [[NSNotificationCenter defaultCenter] postNotificationName:@"MiYouLiteNeedReloadSession" object:nil];
         return;
     }
@@ -91,10 +82,9 @@ static void MiYouLiteForceReloadSessions(void) {
 
 %hook CMessageMgr
 - (void)onRevokeMsg:(id)arg1 {
-    // 开启防撤回时，拦截撤回（原插件逻辑：不调用 %orig，使消息保留）
     if ([MiYouLiteManager sharedManager].antiRevokeEnabled) {
         NSLog(@"[MiYouLite] 拦截撤回: %@", arg1);
-        return; // 不执行原撤回逻辑
+        return;
     }
     %orig;
 }
@@ -108,21 +98,21 @@ static void MiYouLiteForceReloadSessions(void) {
     if (!contact) return nil;
     NSString *usrName = @"";
     @try { usrName = [contact valueForKey:@"m_nsUsrName"]; } @catch (NSException *e) {}
-    if ([[MiYouLiteManager sharedManager] isFriendHidden:usrName]) {
-        return nil; // 隐藏单个联系人
+    if ([[MiYouLiteManager sharedManager] isHidden:usrName]) {
+        return nil;
     }
     return contact;
 }
 - (id)getAllContacts {
     id contacts = %orig;
-    if (![MiYouLiteManager sharedManager].hideModeEnabled) return contacts;
-    if ([MiYouLiteManager sharedManager].isUnlocked) return contacts;
+    MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
+    if (!mgr.hideModeEnabled || mgr.isUnlocked) return contacts;
     if (![contacts isKindOfClass:[NSArray class]]) return contacts;
     NSMutableArray *filtered = [NSMutableArray array];
     for (id contact in contacts) {
         NSString *usrName = @"";
         @try { usrName = [contact valueForKey:@"m_nsUsrName"]; } @catch (NSException *e) {}
-        if (![[MiYouLiteManager sharedManager] isFriendHidden:usrName]) {
+        if (![mgr isHidden:usrName]) {
             [filtered addObject:contact];
         }
     }
@@ -143,14 +133,13 @@ static int MiYouLite_GetSessionCount(id self, SEL _cmd) {
     int count = g_origGetSessionCount(self, _cmd);
     MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
     if (!mgr.hideModeEnabled || mgr.isUnlocked) return count;
-    // 计算需要隐藏的会话数量，从总数中扣除
     int hidden = 0;
     for (int i = 0; i < count; i++) {
         id session = g_origGetSessionAtIndex(self, @selector(GetSessionAtIndex:), i);
         if (!session) continue;
         NSString *name = @"";
         @try { name = [session valueForKey:@"m_nsUserName"]; } @catch (NSException *e) {}
-        if ([mgr isFriendHidden:name] || [mgr isRoomHidden:name]) hidden++;
+        if ([mgr isHidden:name]) hidden++;
     }
     return MAX(0, count - hidden);
 }
@@ -160,7 +149,6 @@ static id MiYouLite_GetSessionAtIndex(id self, SEL _cmd, int arg1) {
     if (!mgr.hideModeEnabled || mgr.isUnlocked) {
         return g_origGetSessionAtIndex(self, _cmd, arg1);
     }
-    // 跳过被隐藏的会话：在 original 序列中顺序查找第 arg1 个未隐藏会话
     int count = g_origGetSessionCount(self, @selector(GetSessionCount));
     int skipped = 0;
     for (int i = 0; i < count; i++) {
@@ -168,7 +156,7 @@ static id MiYouLite_GetSessionAtIndex(id self, SEL _cmd, int arg1) {
         if (!session) continue;
         NSString *name = @"";
         @try { name = [session valueForKey:@"m_nsUserName"]; } @catch (NSException *e) {}
-        if ([mgr isFriendHidden:name] || [mgr isRoomHidden:name]) { skipped++; continue; }
+        if ([mgr isHidden:name]) { skipped++; continue; }
         if (skipped == arg1) return session;
         skipped++;
     }
@@ -209,7 +197,6 @@ static id MiYouLite_GetSessionAtIndex(id self, SEL _cmd, int arg1) {
             mgr.isUnlocked = YES;
             MiYouLiteForceReloadSessions();
             NSLog(@"[MiYouLite] 密码匹配，已解锁密友");
-            // 30 秒后自动重新锁定（退出搜索框效果）
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 mgr.isUnlocked = NO;
                 MiYouLiteForceReloadSessions();
@@ -219,10 +206,19 @@ static id MiYouLite_GetSessionAtIndex(id self, SEL _cmd, int arg1) {
 }
 %end
 
-#pragma mark - 构造函数：安装 MMNewSessionMgr 手动 hook
+#pragma mark - 构造函数：安装 MMNewSessionMgr 手动 hook + 设置变更监听
+
+static void MiYouLiteSettingsChanged(CFNotificationCenterRef center,
+                                     void *observer,
+                                     CFStringRef name,
+                                     const void *object,
+                                     CFDictionaryRef userInfo) {
+    [[MiYouLiteManager sharedManager] reload];
+    MiYouLiteForceReloadSessions();
+}
 
 %ctor {
-    NSLog(@"[MiYouLite] 插件已加载 - 版本 1.2.0 roothide (微信 8.0.75)");
+    NSLog(@"[MiYouLite] 插件已加载 - 版本 1.2.2 roothide (微信 8.0.75)");
     Class sessionMgrClass = objc_getClass("MMNewSessionMgr");
     if (sessionMgrClass) {
         Method mCount = class_getInstanceMethod(sessionMgrClass, @selector(GetSessionCount));
@@ -236,10 +232,11 @@ static id MiYouLite_GetSessionAtIndex(id self, SEL _cmd, int arg1) {
                             (IMP)MiYouLite_GetSessionAtIndex, (IMP *)&g_origGetSessionAtIndex);
         }
     }
-    // 解锁/锁定后刷新（微信若监听该通知则生效）
-    [[NSNotificationCenter defaultCenter] addObserverForName:@"MiYouLiteNeedReloadSession"
-                                                       object:nil queue:nil
-                                                  usingBlock:^(NSNotification *note) {
-        MiYouLiteForceReloadSessions();
-    }];
+    // 设置 app 修改后热重载
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
+                                    NULL,
+                                    MiYouLiteSettingsChanged,
+                                    CFSTR("com.miyou.lite/settings-changed"),
+                                    NULL,
+                                    CFNotificationSuspensionBehaviorCoalesce);
 }
