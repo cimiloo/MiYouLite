@@ -1,27 +1,28 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
+#import <substrate.h>
 
+#pragma mark - 配置管理器（本地 plist 持久化隐藏列表/密码）
+
+static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/com.miyou.lite.plist";
 static char kMiYouLiteSwitchKey;
-
-#pragma mark - 配置管理器
-
-static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/com.miyoulite.plist";
 
 @interface MiYouLiteManager : NSObject
 + (instancetype)sharedManager;
 @property (nonatomic, assign) BOOL antiRevokeEnabled;
 @property (nonatomic, assign) BOOL hideModeEnabled;
 @property (nonatomic, strong) NSString *password;
-@property (nonatomic, strong) NSMutableArray *hiddenFriends;
-@property (nonatomic, strong) NSMutableArray *hiddenRooms;
-@property (nonatomic, assign) BOOL isUnlocked; // 密码验证通过后为 YES
+@property (nonatomic, strong) NSMutableArray *hiddenFriends; // wxid 列表
+@property (nonatomic, strong) NSMutableArray *hiddenRooms;   // room id 列表
+@property (nonatomic, assign) BOOL isUnlocked;               // 密码验证通过后为 YES
+- (BOOL)isFriendHidden:(NSString *)usrName;
+- (BOOL)isRoomHidden:(NSString *)roomName;
 - (void)save;
 - (void)load;
 @end
 
 @implementation MiYouLiteManager
-
 + (instancetype)sharedManager {
     static MiYouLiteManager *instance = nil;
     static dispatch_once_t onceToken;
@@ -31,7 +32,6 @@ static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/c
     });
     return instance;
 }
-
 - (instancetype)init {
     self = [super init];
     if (self) {
@@ -41,264 +41,88 @@ static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/c
     }
     return self;
 }
-
 - (void)load {
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:kMiYouLitePlistPath];
     if (dict) {
         self.antiRevokeEnabled = [dict[@"antiRevokeEnabled"] boolValue];
-        self.hideModeEnabled = [dict[@"hideModeEnabled"] boolValue];
-        self.password = dict[@"password"] ?: @"";
-        self.hiddenFriends = [NSMutableArray arrayWithArray:dict[@"hiddenFriends"] ?: @[]];
-        self.hiddenRooms = [NSMutableArray arrayWithArray:dict[@"hiddenRooms"] ?: @[]];
+        self.hideModeEnabled   = [dict[@"hideModeEnabled"] boolValue];
+        self.password          = dict[@"password"] ?: @"";
+        self.hiddenFriends     = [NSMutableArray arrayWithArray:dict[@"hiddenFriends"] ?: @[]];
+        self.hiddenRooms       = [NSMutableArray arrayWithArray:dict[@"hiddenRooms"] ?: @[]];
     }
 }
-
 - (void)save {
     NSDictionary *dict = @{
         @"antiRevokeEnabled": @(self.antiRevokeEnabled),
-        @"hideModeEnabled": @(self.hideModeEnabled),
-        @"password": self.password ?: @"",
-        @"hiddenFriends": self.hiddenFriends ?: @[],
-        @"hiddenRooms": self.hiddenRooms ?: @[]
+        @"hideModeEnabled":   @(self.hideModeEnabled),
+        @"password":          self.password ?: @"",
+        @"hiddenFriends":     self.hiddenFriends ?: @[],
+        @"hiddenRooms":       self.hiddenRooms ?: @[]
     };
     [dict writeToFile:kMiYouLitePlistPath atomically:YES];
 }
-
 - (BOOL)isFriendHidden:(NSString *)usrName {
     if (!self.hideModeEnabled || self.isUnlocked) return NO;
     return [self.hiddenFriends containsObject:usrName ?: @""];
 }
-
 - (BOOL)isRoomHidden:(NSString *)roomName {
     if (!self.hideModeEnabled || self.isUnlocked) return NO;
     return [self.hiddenRooms containsObject:roomName ?: @""];
 }
-
 @end
 
-#pragma mark - 设置界面
-
-@interface MiYouLiteSettingViewController : UIViewController <UITableViewDelegate, UITableViewDataSource>
-@property (nonatomic, strong) UITableView *tableView;
-@property (nonatomic, strong) NSArray *sections;
-@end
-
-@implementation MiYouLiteSettingViewController
-
-- (void)viewDidLoad {
-    [super viewDidLoad];
-    self.title = @"MiYouLite";
-    if (@available(iOS 13.0, *)) {
-        self.view.backgroundColor = [UIColor systemGroupedBackgroundColor];
-    } else {
-        self.view.backgroundColor = [UIColor groupTableViewBackgroundColor];
+// 监听解锁后刷新会话列表
+static void MiYouLiteForceReloadSessions(void) {
+    Class cls = objc_getClass("MMNewSessionMgr");
+    if (!cls) return;
+    id mgr = [cls performSelector:@selector(getSessionMgr)] ?: nil;
+    if (!mgr) {
+        // 退而求其次：直接发通知让微信自己刷新
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"MiYouLiteNeedReloadSession" object:nil];
+        return;
     }
-    
-    self.tableView = [[UITableView alloc] initWithFrame:self.view.bounds style:UITableViewStyleGrouped];
-    self.tableView.delegate = self;
-    self.tableView.dataSource = self;
-    self.tableView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    [self.view addSubview:self.tableView];
-    
-    self.sections = @[
-        @{@"title": @"防撤回", @"cells": @[
-            @{@"label": @"开启防撤回", @"type": @"switch", @"key": @"antiRevokeEnabled"}
-        ]},
-        @{@"title": @"密友隐藏", @"cells": @[
-            @{@"label": @"开启隐藏模式", @"type": @"switch", @"key": @"hideModeEnabled"},
-            @{@"label": @"设置密码", @"type": @"push", @"vc": @"password"},
-            @{@"label": @"管理隐藏好友", @"type": @"push", @"vc": @"friends"},
-            @{@"label": @"管理隐藏群聊", @"type": @"push", @"vc": @"rooms"}
-        ]}
-    ];
-}
-
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return self.sections.count;
-}
-
-- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    return [self.sections[section][@"cells"] count];
-}
-
-- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
-    return self.sections[section][@"title"];
-}
-
-- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell"];
-    if (!cell) cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"Cell"];
-    
-    NSDictionary *cellData = self.sections[indexPath.section][@"cells"][indexPath.row];
-    cell.textLabel.text = cellData[@"label"];
-    cell.selectionStyle = UITableViewCellSelectionStyleNone;
-    
-    if ([cellData[@"type"] isEqualToString:@"switch"]) {
-        UISwitch *sw = [[UISwitch alloc] init];
-        NSString *key = cellData[@"key"];
-        sw.on = [[MiYouLiteManager sharedManager] valueForKey:key];
-        [sw addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
-        objc_setAssociatedObject(sw, &kMiYouLiteSwitchKey, key, OBJC_ASSOCIATION_RETAIN);
-        cell.accessoryView = sw;
-    } else if ([cellData[@"type"] isEqualToString:@"push"]) {
-        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-    }
-    
-    return cell;
-}
-
-- (void)switchChanged:(UISwitch *)sender {
-    NSString *key = objc_getAssociatedObject(sender, &kMiYouLiteSwitchKey);
-    [[MiYouLiteManager sharedManager] setValue:@(sender.on) forKey:key];
-    [[MiYouLiteManager sharedManager] save];
-}
-
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    NSDictionary *cellData = self.sections[indexPath.section][@"cells"][indexPath.row];
-    NSString *vcType = cellData[@"vc"];
-    if ([vcType isEqualToString:@"password"]) {
-        [self showPasswordSetting];
-    } else if ([vcType isEqualToString:@"friends"]) {
-        [self showFriendPicker];
-    } else if ([vcType isEqualToString:@"rooms"]) {
-        [self showRoomPicker];
+    if ([mgr respondsToSelector:@selector(rebuildMainSessions)]) {
+        [mgr performSelector:@selector(rebuildMainSessions)];
+    } else if ([mgr respondsToSelector:@selector(updateMainSessionList)]) {
+        [mgr performSelector:@selector(updateMainSessionList)];
     }
 }
 
-- (void)showPasswordSetting {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"设置密码" message:@"输入密码后，在微信搜索框输入密码可显示隐藏的联系人" preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-        tf.placeholder = @"请输入密码";
-        tf.secureTextEntry = YES;
-    }];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-        tf.placeholder = @"确认密码";
-        tf.secureTextEntry = YES;
-    }];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        NSString *pwd = alert.textFields[0].text ?: @"";
-        NSString *confirm = alert.textFields[1].text ?: @"";
-        if ([pwd isEqualToString:confirm] && pwd.length > 0) {
-            [MiYouLiteManager sharedManager].password = pwd;
-            [[MiYouLiteManager sharedManager] save];
-            UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"成功" message:@"密码设置成功" preferredStyle:UIAlertControllerStyleAlert];
-            [ok addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-            [self presentViewController:ok animated:YES completion:nil];
-        } else {
-            UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"错误" message:@"密码不一致或为空" preferredStyle:UIAlertControllerStyleAlert];
-            [fail addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-            [self presentViewController:fail animated:YES completion:nil];
-        }
-    }]];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (void)showFriendPicker {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"管理隐藏好友" message:@"输入好友的微信号（wxid），用逗号分隔" preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-        tf.placeholder = @"wxid_xxx, wxid_yyy";
-        tf.text = [[MiYouLiteManager sharedManager].hiddenFriends componentsJoinedByString:@", "];
-    }];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        NSString *text = alert.textFields[0].text ?: @"";
-        NSArray *ids = [text componentsSeparatedByString:@","];
-        NSMutableArray *cleaned = [NSMutableArray array];
-        for (NSString *wxid in ids) {
-            NSString *trimmed = [wxid stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            if (trimmed.length > 0) [cleaned addObject:trimmed];
-        }
-        [MiYouLiteManager sharedManager].hiddenFriends = cleaned;
-        [[MiYouLiteManager sharedManager] save];
-    }]];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (void)showRoomPicker {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"管理隐藏群聊" message:@"输入群聊的 ID，用逗号分隔" preferredStyle:UIAlertControllerStyleAlert];
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *tf) {
-        tf.placeholder = @"room_id_1, room_id_2";
-        tf.text = [[MiYouLiteManager sharedManager].hiddenRooms componentsJoinedByString:@", "];
-    }];
-    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        NSString *text = alert.textFields[0].text ?: @"";
-        NSArray *ids = [text componentsSeparatedByString:@","];
-        NSMutableArray *cleaned = [NSMutableArray array];
-        for (NSString *rid in ids) {
-            NSString *trimmed = [rid stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            if (trimmed.length > 0) [cleaned addObject:trimmed];
-        }
-        [MiYouLiteManager sharedManager].hiddenRooms = cleaned;
-        [[MiYouLiteManager sharedManager] save];
-    }]];
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-@end
-
-#pragma mark - 注入微信设置入口
-
-%hook MMUIViewController
-- (void)viewDidLoad {
-    %orig;
-    // 识别微信的"我"页面，注入设置入口
-    NSString *className = NSStringFromClass(object_getClass(self));
-    if ([className isEqualToString:@"MMNewSettingViewController"] ||
-        [className isEqualToString:@"SettingViewController"] ||
-        [className isEqualToString:@"NewSettingViewController"]) {
-        // 在设置页面注入入口的代码
-        // 通过 swizzle 或直接修改 tableView 数据源
-        NSLog(@"[MiYouLite] 检测到设置页面: %@", className);
-    }
-}
-%end
-
-#pragma mark - 防撤回
+#pragma mark - 防撤回（基于原 MiYou.dylib 真实符号 onRevokeMsg:）
 
 %hook CMessageMgr
 - (void)onRevokeMsg:(id)arg1 {
+    // 开启防撤回时，拦截撤回（原插件逻辑：不调用 %orig，使消息保留）
+    if ([MiYouLiteManager sharedManager].antiRevokeEnabled) {
+        NSLog(@"[MiYouLite] 拦截撤回: %@", arg1);
+        return; // 不执行原撤回逻辑
+    }
     %orig;
-    if (![MiYouLiteManager sharedManager].antiRevokeEnabled) return;
-    NSLog(@"[MiYouLite] 拦截到撤回消息");
-    // 保存被撤回消息的内容
-    // 通过 MessageService 或直接读取消息数据
-    // 然后显示在界面上
 }
 %end
 
-#pragma mark - 密友 - 过滤联系人列表
+#pragma mark - 密友 - 过滤联系人（CContactMgr.getContact:/getAllContacts，字段 m_nsUsrName）
 
 %hook CContactMgr
 - (id)getContact:(id)arg1 {
     id contact = %orig;
     if (!contact) return nil;
-    // 获取联系人 wxid
     NSString *usrName = @"";
-    @try {
-        usrName = [contact valueForKey:@"m_nsUsrName"];
-    } @catch (NSException *e) {}
+    @try { usrName = [contact valueForKey:@"m_nsUsrName"]; } @catch (NSException *e) {}
     if ([[MiYouLiteManager sharedManager] isFriendHidden:usrName]) {
-        return nil;
+        return nil; // 隐藏单个联系人
     }
     return contact;
 }
-
 - (id)getAllContacts {
     id contacts = %orig;
     if (![MiYouLiteManager sharedManager].hideModeEnabled) return contacts;
     if ([MiYouLiteManager sharedManager].isUnlocked) return contacts;
-    
-    // 过滤联系人列表
+    if (![contacts isKindOfClass:[NSArray class]]) return contacts;
     NSMutableArray *filtered = [NSMutableArray array];
     for (id contact in contacts) {
         NSString *usrName = @"";
-        @try {
-            usrName = [contact valueForKey:@"m_nsUsrName"];
-        } @catch (NSException *e) {}
+        @try { usrName = [contact valueForKey:@"m_nsUsrName"]; } @catch (NSException *e) {}
         if (![[MiYouLiteManager sharedManager] isFriendHidden:usrName]) {
             [filtered addObject:contact];
         }
@@ -307,79 +131,116 @@ static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/c
 }
 %end
 
-#pragma mark - 密友 - 过滤会话列表
+#pragma mark - 密友 - 过滤会话（MMNewSessionMgr.GetSessionCount/GetSessionAtIndex:，字段 m_nsUserName）
+// 使用 MSHookMessageEx 手动 hook，以便拿到 original IMP，避免递归死循环。
 
-%hook MMNewSessionMgr
-- (int)GetSessionCount {
-    int count = %orig;
-    if (![MiYouLiteManager sharedManager].hideModeEnabled) return count;
-    if ([MiYouLiteManager sharedManager].isUnlocked) return count;
-    // 减去隐藏的会话
-    int hidden = (int)([MiYouLiteManager sharedManager].hiddenFriends.count +
-                       [MiYouLiteManager sharedManager].hiddenRooms.count);
+typedef int (*OrigGetSessionCount)(id, SEL);
+typedef id  (*OrigGetSessionAtIndex)(id, SEL, int);
+
+static OrigGetSessionCount  g_origGetSessionCount = NULL;
+static OrigGetSessionAtIndex g_origGetSessionAtIndex = NULL;
+
+static int MiYouLite_GetSessionCount(id self, SEL _cmd) {
+    int count = g_origGetSessionCount(self, _cmd);
+    MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
+    if (!mgr.hideModeEnabled || mgr.isUnlocked) return count;
+    // 计算需要隐藏的会话数量，从总数中扣除
+    int hidden = 0;
+    for (int i = 0; i < count; i++) {
+        id session = g_origGetSessionAtIndex(self, @selector(GetSessionAtIndex:), i);
+        if (!session) continue;
+        NSString *name = @"";
+        @try { name = [session valueForKey:@"m_nsUserName"]; } @catch (NSException *e) {}
+        if ([mgr isFriendHidden:name] || [mgr isRoomHidden:name]) hidden++;
+    }
     return MAX(0, count - hidden);
 }
 
-- (id)GetSessionAtIndex:(int)arg1 {
-    id session = %orig;
-    if (!session) return nil;
-    if (![MiYouLiteManager sharedManager].hideModeEnabled) return session;
-    if ([MiYouLiteManager sharedManager].isUnlocked) return session;
-    
-    // 检查会话是否被隐藏
-    NSString *sessionName = @"";
-    @try {
-        sessionName = [session valueForKey:@"m_nsUserName"];
-    } @catch (NSException *e) {}
-    
-    if ([[MiYouLiteManager sharedManager] isFriendHidden:sessionName] ||
-        [[MiYouLiteManager sharedManager] isRoomHidden:sessionName]) {
-        // 跳过隐藏的会话，返回下一个
-        return ((id (*)(id, SEL, int))objc_msgSend)(self, @selector(GetSessionAtIndex:), arg1 + 1);
+static id MiYouLite_GetSessionAtIndex(id self, SEL _cmd, int arg1) {
+    MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
+    if (!mgr.hideModeEnabled || mgr.isUnlocked) {
+        return g_origGetSessionAtIndex(self, _cmd, arg1);
     }
-    return session;
+    // 跳过被隐藏的会话：在 original 序列中顺序查找第 arg1 个未隐藏会话
+    int count = g_origGetSessionCount(self, @selector(GetSessionCount));
+    int skipped = 0;
+    for (int i = 0; i < count; i++) {
+        id session = g_origGetSessionAtIndex(self, @selector(GetSessionAtIndex:), i);
+        if (!session) continue;
+        NSString *name = @"";
+        @try { name = [session valueForKey:@"m_nsUserName"]; } @catch (NSException *e) {}
+        if ([mgr isFriendHidden:name] || [mgr isRoomHidden:name]) { skipped++; continue; }
+        if (skipped == arg1) return session;
+        skipped++;
+    }
+    return nil;
 }
-%end
 
-#pragma mark - 密友 - 搜索框密码解锁
+#pragma mark - 密友 - 搜索框密码解锁（UISearchBar.textField EditingChanged）
 
 %hook UISearchBar
-- (void)textDidChange:(id)arg1 {
+- (void)layoutSubviews {
     %orig;
-    // 检查是否是在微信主界面的搜索框
-    NSString *text = [self text];
+    UITextField *tf = nil;
+    if (@available(iOS 13.0, *)) {
+        tf = self.searchTextField;
+    } else {
+        @try { tf = [self valueForKey:@"_searchField"]; } @catch (NSException *e) {}
+    }
+    if (tf) {
+        [tf removeTarget:self action:@selector(miYouLite_searchTextChanged:) forControlEvents:UIControlEventEditingChanged];
+        [tf addTarget:self action:@selector(miYouLite_searchTextChanged:) forControlEvents:UIControlEventEditingChanged];
+    }
+}
+- (void)dealloc {
+    UITextField *tf = nil;
+    if (@available(iOS 13.0, *)) {
+        tf = self.searchTextField;
+    } else {
+        @try { tf = [self valueForKey:@"_searchField"]; } @catch (NSException *e) {}
+    }
+    [tf removeTarget:self action:@selector(miYouLite_searchTextChanged:) forControlEvents:UIControlEventEditingChanged];
+    %orig;
+}
+%new
+- (void)miYouLite_searchTextChanged:(UITextField *)textField {
     MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
-    
     if (mgr.hideModeEnabled && mgr.password.length > 0) {
-        if ([text isEqualToString:mgr.password]) {
+        if ([textField.text isEqualToString:mgr.password]) {
             mgr.isUnlocked = YES;
-            // 刷新界面
-            [[NSNotificationCenter defaultCenter] postNotificationName:@"MiYouLiteUnlocked" object:nil];
-            NSLog(@"[MiYouLite] 密码匹配，已解锁");
-            // 延迟重置解锁状态（退出搜索后自动锁定）
+            MiYouLiteForceReloadSessions();
+            NSLog(@"[MiYouLite] 密码匹配，已解锁密友");
+            // 30 秒后自动重新锁定（退出搜索框效果）
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 mgr.isUnlocked = NO;
-                [[NSNotificationCenter defaultCenter] postNotificationName:@"MiYouLiteUnlocked" object:nil];
+                MiYouLiteForceReloadSessions();
             });
         }
     }
 }
 %end
 
-#pragma mark - 构造函数
+#pragma mark - 构造函数：安装 MMNewSessionMgr 手动 hook
 
 %ctor {
-    NSLog(@"[MiYouLite] 插件已加载 - 版本 1.0.0");
-    // 监听通知，刷新联系人列表
-    [[NSNotificationCenter defaultCenter] addObserverForName:@"MiYouLiteUnlocked" object:nil queue:nil usingBlock:^(NSNotification *note) {
-        // 强制刷新微信界面
-        UIWindow *keyWindow = nil;
-        for (UIWindow *w in [UIApplication sharedApplication].windows) {
-            if (w.isKeyWindow) { keyWindow = w; break; }
+    NSLog(@"[MiYouLite] 插件已加载 - 版本 1.1.0 (微信 8.0.75)");
+    Class sessionMgrClass = objc_getClass("MMNewSessionMgr");
+    if (sessionMgrClass) {
+        Method mCount = class_getInstanceMethod(sessionMgrClass, @selector(GetSessionCount));
+        Method mIndex = class_getInstanceMethod(sessionMgrClass, @selector(GetSessionAtIndex:));
+        if (mCount) {
+            MSHookMessageEx(sessionMgrClass, @selector(GetSessionCount),
+                            (IMP)MiYouLite_GetSessionCount, (IMP *)&g_origGetSessionCount);
         }
-        UIViewController *rootVC = keyWindow.rootViewController;
-        if ([rootVC respondsToSelector:@selector(reloadData)]) {
-            [rootVC performSelector:@selector(reloadData)];
+        if (mIndex) {
+            MSHookMessageEx(sessionMgrClass, @selector(GetSessionAtIndex:),
+                            (IMP)MiYouLite_GetSessionAtIndex, (IMP *)&g_origGetSessionAtIndex);
         }
+    }
+    // 解锁/锁定后刷新（微信若监听该通知则生效）
+    [[NSNotificationCenter defaultCenter] addObserverForName:@"MiYouLiteNeedReloadSession"
+                                                       object:nil queue:nil
+                                                  usingBlock:^(NSNotification *note) {
+        MiYouLiteForceReloadSessions();
     }];
 }
