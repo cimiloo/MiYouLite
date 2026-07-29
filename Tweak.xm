@@ -6,7 +6,6 @@
 #pragma mark - 配置管理器（本地 plist 持久化隐藏列表/密码）
 
 static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/com.miyou.lite.plist";
-static char kMiYouLiteSwitchKey;
 
 @interface MiYouLiteManager : NSObject
 + (instancetype)sharedManager;
