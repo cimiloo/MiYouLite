@@ -13,6 +13,7 @@
 - (void)reloadSpecifiers;
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier;
 - (id)readPreferenceValue:(PSSpecifier *)specifier;
+- (NSBundle *)bundle;       // UIViewController 已声明，但编译器需见前向声明
 @end
 
 @interface PSSpecifier : NSObject
