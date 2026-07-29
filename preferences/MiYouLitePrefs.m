@@ -1,13 +1,23 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-// 诊断日志：同时写文件 /var/jb/tmp/miyoulite_prefs.log，绕过系统 log 命令兼容性问题
-// 装后可在 NewTerm 执行：cat /var/jb/tmp/miyoulite_prefs.log 查看
+// 诊断日志：写文件，绕过系统 log 命令兼容性问题。
+// 自动选择可用目录并建目录，确保 cat 一定有输出。
+// 装后可在 NewTerm 执行：cat /var/jb/tmp/miyoulite_prefs.log 查看（或 /tmp/...）
 #import <stdio.h>
+static NSString *MYLLogPath(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *dirs = @[ @"/var/jb/tmp", @"/tmp", @"/var/tmp" ];
+    NSString *d = nil;
+    for (NSString *c in dirs) { if ([fm fileExistsAtPath:c]) { d = c; break; } }
+    if (!d) { d = @"/var/jb/tmp"; [fm createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil]; }
+    return [d stringByAppendingPathComponent:@"miyoulite_prefs.log"];
+}
 #define MYLLog(...) do { \
     NSString *__msg = [NSString stringWithFormat:__VA_ARGS__]; \
     NSLog(@"[MiYouLite] %@", __msg); \
-    FILE *__lf = fopen("/var/jb/tmp/miyoulite_prefs.log", "a"); \
+    NSString *__p = MYLLogPath(); \
+    FILE *__lf = fopen([__p UTF8String], "a"); \
     if (__lf) { fprintf(__lf, "[MiYouLite] %s\n", [__msg UTF8String]); fclose(__lf); } \
 } while(0)
 

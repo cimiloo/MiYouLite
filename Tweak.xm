@@ -2,6 +2,31 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #import <substrate.h>
+#import <stdio.h>
+
+// ── 诊断日志（与设置 bundle 共用文件名，自动建目录 + 多候选路径）──
+static NSString *MYLLogPath(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *dirs = @[ @"/var/jb/tmp", @"/tmp", @"/var/tmp" ];
+    NSString *d = nil;
+    for (NSString *c in dirs) { if ([fm fileExistsAtPath:c]) { d = c; break; } }
+    if (!d) { d = @"/var/jb/tmp"; [fm createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil]; }
+    return [d stringByAppendingPathComponent:@"miyoulite_prefs.log"];
+}
+#define MYLLog(...) do { \
+    NSString *__m = [NSString stringWithFormat:__VA_ARGS__]; \
+    NSLog(@"[MiYouLite] %@", __m); \
+    NSString *__p = MYLLogPath(); \
+    FILE *__lf = fopen([__p UTF8String], "a"); \
+    if (__lf) { fprintf(__lf, "[MiYouLite] %s\n", [__m UTF8String]); fclose(__lf); } \
+} while(0)
+
+@interface PSSpecifier : NSObject
+- (id)propertyForKey:(NSString *)key;
+@end
+
+// 前向声明：为 roothide PL 的 PLCustomListController.bundle 安装回退 hook
+static void MiYouLiteHookPL(void);
 
 #pragma mark - 配置管理器（CFPreferences 标准域，与设置 app 共享）
 
@@ -218,7 +243,8 @@ static void MiYouLiteSettingsChanged(CFNotificationCenterRef center,
 }
 
 %ctor {
-    NSLog(@"[MiYouLite] 插件已加载 - 版本 1.2.2 roothide (微信 8.0.75)");
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+    MYLLog(@"tweak loaded, version=1.2.3, process=%@", bid ?: @"(unknown)");
     Class sessionMgrClass = objc_getClass("MMNewSessionMgr");
     if (sessionMgrClass) {
         Method mCount = class_getInstanceMethod(sessionMgrClass, @selector(GetSessionCount));
@@ -239,39 +265,88 @@ static void MiYouLiteSettingsChanged(CFNotificationCenterRef center,
                                     CFSTR("com.miyou.lite/settings-changed"),
                                     NULL,
                                     CFNotificationSuspensionBehaviorCoalesce);
+    // 为 roothide PreferenceLoader 安装「bundle 回退」hook（确定性保险）
+    MiYouLiteHookPL();
 }
 
 #pragma mark - 为 roothide PreferenceLoader 的 isController 预加载设置 bundle
-// 根因：PL 在 Preferences.app 启动扫描入口 plist 时就 NSClassFromString(detail=类名)，
-// 而该 bundle 本是点击设置项时才 lazyLoad 的，导致扫描时类尚未注册 → 类名解析为 nil →
-// PL 回退 PLCustomListController（其 bundle 方法硬返回 PL 目录，找不到 Root.plist → 空白）。
+// 根因：PL 在 Preferences.app 启动扫描入口 plist 时解析 detail=类名。
+// 该 bundle 本是点击设置项时才 lazyLoad，扫描时类可能尚未注册 → 类名解析为 nil →
+// PL 回退 PLCustomListController（其 bundle 返回 PL 目录，找不到 Root.plist → 空白）。
 // 这里在 Preferences 进程启动早期手动 load 该 bundle，使类名在 PL 扫描时可被解析。
-#include <stdio.h>
+// （另见下方 MiYouLiteHookPL：即使预加载时序失败，也通过 hook 兜底。）
+
+static void MiYouLiteTryPreload(void) {
+    NSArray *cands = @[
+        @"/var/jb/Library/PreferenceBundles/MiYouLitePrefs.bundle",
+        @"/Library/PreferenceBundles/MiYouLitePrefs.bundle"
+    ];
+    for (NSString *p in cands) {
+        NSBundle *b = [NSBundle bundleWithPath:p];
+        if (!b) continue;
+        if ([b isLoaded]) { MYLLog(@"preload already loaded: %@", p); return; }
+        NSError *e = nil;
+        BOOL ok = [b loadAndReturnError:&e];
+        BOOL clsOK = (NSClassFromString(@"MiYouLitePrefsController") != nil);
+        MYLLog(@"preload path=%@ loaded=%d classResolved=%d err=%@",
+               p, ok, clsOK, e ? [e localizedDescription] : @"none");
+        if (ok) return;
+    }
+    MYLLog(@"preload FAILED: bundle not loaded from any candidate");
+}
+
 __attribute__((constructor))
 static void MiYouLitePrefsPreload(void) {
     @autoreleasepool {
         NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
         if (!bid || ![bid isEqualToString:@"com.apple.Preferences"]) return;
+        MiYouLiteTryPreload();
+    }
+}
 
-        NSArray *cands = @[
-            @"/var/jb/Library/PreferenceBundles/MiYouLitePrefs.bundle",
-            @"/Library/PreferenceBundles/MiYouLitePrefs.bundle"
-        ];
-        for (NSString *p in cands) {
+#pragma mark - 确定性保险：hook roothide PL 的 PLCustomListController.bundle
+// 当 detail 类名未能在扫描时解析，PL 会用 PLCustomListController 渲染我们的条目，
+// 而它的 bundle 返回 PL 自身目录（找不到 Root.plist → 空白）。
+// 这里 hook 其 bundle 方法：若 specifier 的 PSLazilyLoadedBundleKey 指向 MiYouLitePrefs，
+// 则返回我们正确的 bundle。MSHookMessageEx 在类可用前会反复重试，规避加载顺序问题。
+
+static NSBundle *(*g_origPLBundle)(id, SEL) = NULL;
+static int g_plRetry = 0;
+
+static NSBundle *MiYouLite_PLBundle(id self, SEL _cmd) {
+    PSSpecifier *spec = nil;
+    @try { spec = [self valueForKey:@"_specifier"]; } @catch (NSException *e) {}
+    NSString *lazy = nil;
+    if (spec && [spec respondsToSelector:@selector(propertyForKey:)]) {
+        lazy = [spec propertyForKey:@"PSLazilyLoadedBundleKey"];
+    }
+    if ([lazy isKindOfClass:[NSString class]] &&
+        [lazy rangeOfString:@"MiYouLitePrefs"].location != NSNotFound) {
+        for (NSString *p in @[
+            @"/Library/PreferenceBundles/MiYouLitePrefs.bundle",
+            @"/var/jb/Library/PreferenceBundles/MiYouLitePrefs.bundle"]) {
             NSBundle *b = [NSBundle bundleWithPath:p];
-            if (!b) continue;
-            NSError *e = nil;
-            BOOL ok = [b loadAndReturnError:&e];
-            BOOL clsOK = (NSClassFromString(@"MiYouLitePrefsController") != nil);
-            NSLog(@"[MiYouLite] Preferences 预加载设置bundle path=%@ loaded=%d classResolved=%d err=%@",
-                  p, ok, clsOK, e);
-            FILE *lf = fopen("/var/jb/tmp/miyoulite_prefs.log", "a");
-            if (lf) {
-                fprintf(lf, "[MiYouLite] preload path=%s loaded=%d classResolved=%d err=%s\n",
-                        p.UTF8String, ok, clsOK, [[e localizedDescription] UTF8String] ?: "");
-                fclose(lf);
+            if (b && [b pathForResource:@"Root" ofType:@"plist"]) {
+                MYLLog(@"PLFallback: bundle redirected -> %@", p);
+                return b;
             }
-            if (ok) break;
         }
     }
+    return g_origPLBundle ? g_origPLBundle(self, _cmd) : nil;
+}
+
+static void MiYouLiteHookPL(void) {
+    Class plClass = objc_getClass("PLCustomListController");
+    if (!plClass) {
+        if (g_plRetry++ < 20) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ MiYouLiteHookPL(); });
+        } else {
+            MYLLog(@"PLFallback: PLCustomListController never appeared, giving up");
+        }
+        return;
+    }
+    if (g_origPLBundle) return; // 已安装
+    MSHookMessageEx(plClass, @selector(bundle), (IMP)MiYouLite_PLBundle, (IMP *)&g_origPLBundle);
+    MYLLog(@"PLFallback hook installed on PLCustomListController");
 }
