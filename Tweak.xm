@@ -1,5 +1,8 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#import <objc/runtime.h>
+
+static char kMiYouLiteSwitchKey;
 
 #pragma mark - 配置管理器
 
@@ -131,7 +134,7 @@ static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/c
         NSString *key = cellData[@"key"];
         sw.on = [[MiYouLiteManager sharedManager] valueForKey:key];
         [sw addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
-        objc_setAssociatedObject(sw, @"key", key, OBJC_ASSOCIATION_RETAIN);
+        objc_setAssociatedObject(sw, &kMiYouLiteSwitchKey, key, OBJC_ASSOCIATION_RETAIN);
         cell.accessoryView = sw;
     } else if ([cellData[@"type"] isEqualToString:@"push"]) {
         cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
@@ -142,7 +145,7 @@ static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/c
 }
 
 - (void)switchChanged:(UISwitch *)sender {
-    NSString *key = objc_getAssociatedObject(sender, @"key");
+    NSString *key = objc_getAssociatedObject(sender, &kMiYouLiteSwitchKey);
     [[MiYouLiteManager sharedManager] setValue:@(sender.on) forKey:key];
     [[MiYouLiteManager sharedManager] save];
 }
@@ -235,13 +238,11 @@ static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/c
 
 #pragma mark - 注入微信设置入口
 
-#import <objc/runtime.h>
-
 %hook MMUIViewController
 - (void)viewDidLoad {
     %orig;
     // 识别微信的"我"页面，注入设置入口
-    NSString *className = NSStringFromClass([self class]);
+    NSString *className = NSStringFromClass(object_getClass(self));
     if ([className isEqualToString:@"MMNewSettingViewController"] ||
         [className isEqualToString:@"SettingViewController"] ||
         [className isEqualToString:@"NewSettingViewController"]) {
@@ -330,7 +331,7 @@ static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/c
     if ([[MiYouLiteManager sharedManager] isFriendHidden:sessionName] ||
         [[MiYouLiteManager sharedManager] isRoomHidden:sessionName]) {
         // 跳过隐藏的会话，返回下一个
-        return [self GetSessionAtIndex:arg1 + 1];
+        return ((id (*)(id, SEL, int))objc_msgSend)(self, @selector(GetSessionAtIndex:), arg1 + 1);
     }
     return session;
 }
@@ -368,7 +369,11 @@ static NSString *const kMiYouLitePlistPath = @"/var/mobile/Library/Preferences/c
     // 监听通知，刷新联系人列表
     [[NSNotificationCenter defaultCenter] addObserverForName:@"MiYouLiteUnlocked" object:nil queue:nil usingBlock:^(NSNotification *note) {
         // 强制刷新微信界面
-        UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+        UIWindow *keyWindow = nil;
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            if (w.isKeyWindow) { keyWindow = w; break; }
+        }
+        UIViewController *rootVC = keyWindow.rootViewController;
         if ([rootVC respondsToSelector:@selector(reloadData)]) {
             [rootVC performSelector:@selector(reloadData)];
         }
