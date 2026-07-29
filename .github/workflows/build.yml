@@ -12,9 +12,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies (ldid, xz)
+      - name: Install dependencies (ldid, xz, dpkg)
         run: |
-          brew install ldid xz || true
+          brew install ldid xz dpkg || true
 
       - name: Setup Theos
         run: |
@@ -26,9 +26,9 @@ jobs:
       - name: Build
         run: |
           set -e
-          cd "$GITHUB_WORKSPACE/MiYouLite"
+          cd "$GITHUB_WORKSPACE"
           make package FINALPACKAGE=1
-          DEB_FILE=$(find "$GITHUB_WORKSPACE/MiYouLite" -name '*.deb' | head -1)
+          DEB_FILE=$(find "$GITHUB_WORKSPACE" -name '*.deb' | head -1)
           echo "DEB_PATH=$DEB_FILE" >> "$GITHUB_ENV"
           echo "DEB_NAME=$(basename "$DEB_FILE")" >> "$GITHUB_ENV"
 
