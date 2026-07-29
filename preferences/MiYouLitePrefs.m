@@ -41,7 +41,7 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 // 仅做计数日志，不改变父类行为
 - (NSArray *)specifiers {
     NSArray *s = [super specifiers];
-    MYLLog(@"specifiers count = %lu (bundle=%@)", (unsigned long)s.count, [self bundle]);
+    MYLLog(@"specifiers count = %lu", (unsigned long)s.count);
     return s;
 }
 
