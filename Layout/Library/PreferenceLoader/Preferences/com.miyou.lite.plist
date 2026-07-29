@@ -8,8 +8,6 @@
 		<string>PSLinkCell</string>
 		<key>label</key>
 		<string>MiYouLite</string>
-		<key>icon</key>
-		<string>MiYouLite.png</string>
 		<key>isController</key>
 		<true/>
 		<key>bundle</key>

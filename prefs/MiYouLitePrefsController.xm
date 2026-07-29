@@ -88,6 +88,9 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
                               kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
         CFPreferencesSynchronize((__bridge CFStringRef)kMiYouLiteDomain,
                                  kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                              CFSTR("com.miyou.lite/settings-changed"),
+                                              NULL, NULL, TRUE);
         _authed = YES;
         [self reloadSpecifiers];
     }]];
