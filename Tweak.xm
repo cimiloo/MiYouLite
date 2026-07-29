@@ -240,3 +240,38 @@ static void MiYouLiteSettingsChanged(CFNotificationCenterRef center,
                                     NULL,
                                     CFNotificationSuspensionBehaviorCoalesce);
 }
+
+#pragma mark - 为 roothide PreferenceLoader 的 isController 预加载设置 bundle
+// 根因：PL 在 Preferences.app 启动扫描入口 plist 时就 NSClassFromString(detail=类名)，
+// 而该 bundle 本是点击设置项时才 lazyLoad 的，导致扫描时类尚未注册 → 类名解析为 nil →
+// PL 回退 PLCustomListController（其 bundle 方法硬返回 PL 目录，找不到 Root.plist → 空白）。
+// 这里在 Preferences 进程启动早期手动 load 该 bundle，使类名在 PL 扫描时可被解析。
+#include <stdio.h>
+__attribute__((constructor))
+static void MiYouLitePrefsPreload(void) {
+    @autoreleasepool {
+        NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+        if (!bid || ![bid isEqualToString:@"com.apple.Preferences"]) return;
+
+        NSArray *cands = @[
+            @"/var/jb/Library/PreferenceBundles/MiYouLitePrefs.bundle",
+            @"/Library/PreferenceBundles/MiYouLitePrefs.bundle"
+        ];
+        for (NSString *p in cands) {
+            NSBundle *b = [NSBundle bundleWithPath:p];
+            if (!b) continue;
+            NSError *e = nil;
+            BOOL ok = [b loadAndReturnError:&e];
+            BOOL clsOK = (NSClassFromString(@"MiYouLitePrefsController") != nil);
+            NSLog(@"[MiYouLite] Preferences 预加载设置bundle path=%@ loaded=%d classResolved=%d err=%@",
+                  p, ok, clsOK, e);
+            FILE *lf = fopen("/var/jb/tmp/miyoulite_prefs.log", "a");
+            if (lf) {
+                fprintf(lf, "[MiYouLite] preload path=%s loaded=%d classResolved=%d err=%s\n",
+                        p.UTF8String, ok, clsOK, [[e localizedDescription] UTF8String] ?: "");
+                fclose(lf);
+            }
+            if (ok) break;
+        }
+    }
+}

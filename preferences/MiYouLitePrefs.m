@@ -1,8 +1,15 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 
-// 诊断日志：进入设置页若仍异常，可在 Mac 上 `log stream | grep MiYouLite` 抓取
-#define MYLLog(...) NSLog(@"[MiYouLite] " __VA_ARGS__)
+// 诊断日志：同时写文件 /var/jb/tmp/miyoulite_prefs.log，绕过系统 log 命令兼容性问题
+// 装后可在 NewTerm 执行：cat /var/jb/tmp/miyoulite_prefs.log 查看
+#import <stdio.h>
+#define MYLLog(...) do { \
+    NSString *__msg = [NSString stringWithFormat:__VA_ARGS__]; \
+    NSLog(@"[MiYouLite] %@", __msg); \
+    FILE *__lf = fopen("/var/jb/tmp/miyoulite_prefs.log", "a"); \
+    if (__lf) { fprintf(__lf, "[MiYouLite] %s\n", [__msg UTF8String]); fclose(__lf); } \
+} while(0)
 
 @class PSSpecifier;
 
