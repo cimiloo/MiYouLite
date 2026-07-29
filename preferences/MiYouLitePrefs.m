@@ -45,40 +45,39 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
 // 我们的子类也必须重写，否则 [self bundle] 返回 nil/错误 →
 // PSListController 找不到 Resources/Root.plist → 空白页！
 // ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════
+// ★★★ 关键修复 ★★★
+// roothide 的 PreferenceLoader 对 isController 条目，会把内部键 `PLBundleKey`
+// 设成「入口 plist 所在目录(/Library/PreferenceLoader/Preferences)」而非我们的 bundle！
+// 若直接返回它，PSListController 去该目录找 Resources/Root.plist 必然落空 → 一直空白。
+// 正确来源：基类 PSListController 依据 bundleForClass（本类就定义在我们的 bundle 内）
+// 或 specifier 关联的已加载 bundle，二者都指向 MiYouLitePrefs.bundle。
+// ═══════════════════════════════════════════════
 - (NSBundle *)bundle {
-    // 优先从 specifier 取 PL 存的 lazy-load bundle 路径
-    PSSpecifier *spec = [self valueForKey:@"_specifier"];  // PSListController 内部 ivar
-    if (spec) {
-        // 尝试 PSLazilyLoadedBundleKey（PL 对 isController+isBundle 条目设的）
-        id lazyPath = [spec propertyForKey:PSLazilyLoadedBundleKey];
-        if (lazyPath) {
-            NSBundle *b = [NSBundle bundleWithPath:lazyPath];
-            if (b) {
-                MYLLog(@"bundle from PSLazilyLoadedBundleKey: %@", b);
-                return b;
-            }
-        }
-        // 尝试 PLBundleKey（PLCustomListController 用的方式）
-        id plBundle = [spec propertyForKey:PLBundleKey];
-        if ([plBundle isKindOfClass:[NSBundle class]]) {
-            MYLLog(@"bundle from PLBundleKey: %@", plBundle);
-            return plBundle;
+    // 只接受「确实包含 Root.plist」的 bundle，杜绝误用 PLBundleKey 指向的目录。
+    NSBundle *(^hasRoot)(NSBundle *) = ^NSBundle *(NSBundle *b) {
+        if (b && [b pathForResource:@"Root" ofType:@"plist"]) return b;
+        return nil;
+    };
+
+    NSBundle *b = [super bundle];
+    if (hasRoot(b)) {
+        MYLLog(@"bundle(super): %@", b.bundlePath);
+        return b;
+    }
+
+    // 兜底：roothide 下 bundle 实际装在 /var/jb/Library/PreferenceBundles/
+    for (NSString *p in @[
+        @"/Library/PreferenceBundles/MiYouLitePrefs.bundle",
+        @"/var/jb/Library/PreferenceBundles/MiYouLitePrefs.bundle"]) {
+        NSBundle *cand = [NSBundle bundleWithPath:p];
+        if (hasRoot(cand)) {
+            MYLLog(@"bundle(fixed): %@", cand.bundlePath);
+            return cand;
         }
     }
 
-    // 兜底：直接按已知路径加载
-    NSBundle *direct = [NSBundle bundleWithPath:@"/Library/PreferenceBundles/MiYouLitePrefs.bundle"];
-    if (direct && [direct isLoaded]) {
-        MYLLog(@"bundle from direct path (loaded): %@", direct);
-        return direct;
-    }
-    direct = [NSBundle bundleWithPath:@"/Library/PreferenceBundles/MiYouLitePrefs.bundle"];
-    if (direct) {
-        MYLLog(@"bundle from direct path: %@", direct);
-        return direct;
-    }
-
-    MYLLog(@"WARNING: all bundle resolution failed, falling back to super");
+    MYLLog(@"WARNING: bundle unresolved, fall back to super");
     return [super bundle];
 }
 
