@@ -13,7 +13,7 @@ include $(THEOS_MAKE_PATH)/tweak.mk
 
 # ── 设置面板 Bundle (密码保护) ──
 BUNDLE_NAME = MiYouLitePrefs
-MiYouLitePrefs_FILES = MiYouLitePrefs.xm
+MiYouLitePrefs_FILES = MiYouLitePrefs.m
 MiYouLitePrefs_CFLAGS = -fobjc-arc
 MiYouLitePrefs_FRAMEWORKS = UIKit Foundation
 # 注意：PSListController 等符号运行期由 Preferences.app 动态提供，
