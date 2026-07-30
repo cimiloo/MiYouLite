@@ -47,6 +47,53 @@ static NSString *MYLLogFile(void) {
     if (__lf) { fprintf(__lf, "[MiYouLite] %s\n", [__msg UTF8String]); fclose(__lf); } \
 } while(0)
 
+#pragma mark - 微信侧诊断日志（写进微信自己的容器 Documents，Filza 可读，无需 log stream）
+// ★ 关键：微信是沙盒 App，写不了 /tmp 与 /var/mobile/Library/Preferences（fopen 静默失败），
+//   所以之前的文件日志里永远看不到微信条目。微信自身容器 Documents 目录必定可写，
+//   Filza 导航到「微信 → Library → ... 或 Documents」即可读取，彻底摆脱 log stream。
+static NSString *MYLWeChatLogPath(void) {
+    NSArray *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *dir = docs.firstObject;
+    if (!dir) dir = NSTemporaryDirectory();
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    return [dir stringByAppendingPathComponent:@"miyoulite_wechat.log"];
+}
+static void MYLWeChatLog(NSString *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_end(ap);
+    NSLog(@"[MiYouLite][WeChat] %@", msg);
+    NSString *p = MYLWeChatLogPath();
+    FILE *lf = fopen([p UTF8String], "a");
+    if (lf) { fprintf(lf, "[MiYouLite][WeChat] %s\n", [msg UTF8String]); fclose(lf); }
+}
+
+// 枚举某个类的实例方法名，便于确认微信 8.0.75 里 hook 目标符号是否改名
+static NSArray *MYLMethodsOfClass(NSString *clsName) {
+    Class c = objc_getClass(clsName.UTF8String);
+    if (!c) return @[@"CLASS_NOT_FOUND"];
+    unsigned int count = 0;
+    Method *methods = class_copyMethodList(c, &count);
+    NSMutableArray *arr = [NSMutableArray array];
+    for (unsigned i = 0; i < count; i++) {
+        [arr addObject:NSStringFromSelector(method_getName(methods[i]))];
+    }
+    free(methods);
+    return arr;
+}
+static NSString *MYLFilterMethods(NSArray *methods, NSArray *keywords) {
+    NSMutableArray *out = [NSMutableArray array];
+    for (NSString *m in methods) {
+        for (NSString *k in keywords) {
+            if ([m rangeOfString:k options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                [out addObject:m]; break;
+            }
+        }
+    }
+    return [out componentsJoinedByString:@", "];
+}
+
 @interface PSSpecifier : NSObject
 - (id)propertyForKey:(NSString *)key;
 @end
@@ -199,9 +246,10 @@ static void MiYouLiteForceReloadSessions(void) {
 %hook CMessageMgr
 - (void)onRevokeMsg:(id)arg1 {
     if ([MiYouLiteManager sharedManager].antiRevokeEnabled) {
-        MYLLog(@"拦截撤回: %@", arg1);
+        MYLWeChatLog(@"*** 防撤回触发 *** arg1=%@", arg1);
         return;
     }
+    MYLWeChatLog(@"(防撤回未开启) 收到撤回请求 arg1=%@", arg1);
     %orig;
 }
 %end
@@ -209,8 +257,15 @@ static void MiYouLiteForceReloadSessions(void) {
 #pragma mark - 密友 - 过滤联系人（CContactMgr.getContact:/getAllContacts，字段 m_nsUsrName）
 
 %hook CContactMgr
+static BOOL g_getContactHit = NO;
+static BOOL g_getAllHit = NO;
 - (id)getContact:(id)arg1 {
     id contact = %orig;
+    if (!g_getContactHit) {
+        g_getContactHit = YES;
+        MYLWeChatLog(@"[hook] CContactMgr getContact: 已触发（hide=%d）",
+            [MiYouLiteManager sharedManager].hideModeEnabled);
+    }
     if (!contact) return nil;
     NSString *usrName = @"";
     @try { usrName = [contact valueForKey:@"m_nsUsrName"]; } @catch (NSException *e) {}
@@ -222,6 +277,11 @@ static void MiYouLiteForceReloadSessions(void) {
 - (id)getAllContacts {
     id contacts = %orig;
     MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
+    if (!g_getAllHit) {
+        g_getAllHit = YES;
+        MYLWeChatLog(@"[hook] CContactMgr getAllContacts 已触发（hide=%d, 返回%lu项）",
+            mgr.hideModeEnabled, (unsigned long)([contacts isKindOfClass:[NSArray class]] ? [contacts count] : 0));
+    }
     if (!mgr.hideModeEnabled || mgr.isUnlocked) return contacts;
     if (![contacts isKindOfClass:[NSArray class]]) return contacts;
     NSMutableArray *filtered = [NSMutableArray array];
@@ -290,6 +350,7 @@ static void MiYouLiteHookSessionMgr(void) {
                            dispatch_get_main_queue(), ^{ MiYouLiteHookSessionMgr(); });
         } else {
             MYLLog(@"MMNewSessionMgr 始终未加载，会话隐藏禁用");
+            MYLWeChatLog(@"MMNewSessionMgr 始终未加载（30s 内），会话 hook 未安装 —— 密友隐藏的会话列表部分失效");
         }
         return;
     }
@@ -301,6 +362,7 @@ static void MiYouLiteHookSessionMgr(void) {
     if (mIndex) MSHookMessageEx(cls, @selector(GetSessionAtIndex:),
                                 (IMP)MiYouLite_GetSessionAtIndex, (IMP *)&g_origGetSessionAtIndex);
     MYLLog(@"MMNewSessionMgr hooks 已安装 (count=%d index=%d)", mCount != nil, mIndex != nil);
+    MYLWeChatLog(@"MMNewSessionMgr hooks 已安装 (count=%d index=%d)", mCount != nil, mIndex != nil);
 }
 
 #pragma mark - 密友 - 搜索框密码解锁（UISearchBar.textField EditingChanged）
@@ -364,7 +426,7 @@ static void MiYouLiteHookPL(void);
 
 %ctor {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-    MYLLog(@"tweak loaded, version=1.2.9, process=%@, log=%@", bid ?: @"(unknown)", MYLLogFile());
+    MYLLog(@"tweak loaded, version=1.2.10, process=%@, log=%@", bid ?: @"(unknown)", MYLLogFile());
 
     // 诊断：微信侧报告关键类/方法是否存在 —— 用于确认 hook 目标符号是否过时（微信 8.0.75）
     if ([bid isEqualToString:@"com.tencent.xin"] || [bid isEqualToString:@"WeChat"]) {
@@ -377,6 +439,41 @@ static void MiYouLiteHookPL(void);
             ccm && !!class_getInstanceMethod(ccm, @selector(getAllContacts)),
             !!nsm, nsm && !!class_getInstanceMethod(nsm, @selector(GetSessionCount)),
             nsm && !!class_getInstanceMethod(nsm, @selector(GetSessionAtIndex:)));
+
+        // 把诊断详情写到「微信自己的容器」，Filza 可读（无需 log stream）
+        NSString *scPath = MYLSharedConfigFile();
+        NSDictionary *sc = MiYouLiteReadSharedConfig();
+        MYLWeChatLog(@"==== MiYouLite 微信诊断 (version=1.2.10) ====");
+        MYLWeChatLog(@"bundleID=%@ docLog=%@", bid, MYLWeChatLogPath());
+        MYLWeChatLog(@"sharedConfigFile=%@", scPath);
+        MYLWeChatLog(@"sharedConfigFileExists=%d parsed=%@",
+                     (int)[[NSFileManager defaultManager] fileExistsAtPath:scPath], sc ?: @"nil");
+        if (sc) {
+            MYLWeChatLog(@"sharedConfig: anti=%@ hide=%@ pwd.len=%lu friends.len=%lu",
+                sc[@"antiRevokeEnabled"], sc[@"hideModeEnabled"],
+                (unsigned long)[(sc[@"password"] ?: @"") length],
+                (unsigned long)[(sc[@"hiddenFriends"] ?: @"") length]);
+        }
+        MiYouLiteManager *m = [MiYouLiteManager sharedManager];
+        MYLWeChatLog(@"mgr.reload -> anti=%d hide=%d friends=%lu pwd.len=%lu",
+            m.antiRevokeEnabled, m.hideModeEnabled,
+            (unsigned long)m.hiddenFriends.count, (unsigned long)m.password.length);
+        // 关键类存在性
+        MYLWeChatLog(@"CLASS CMessageMgr=%d CContactMgr=%d MMNewSessionMgr=%d",
+            !!cm, !!ccm, !!nsm);
+        // 直接 dump 含关键词的方法名，确认 8.0.75 里符号是否改名
+        MYLWeChatLog(@"CMessageMgr *Revoke*: %@",
+            MYLFilterMethods(MYLMethodsOfClass(@"CMessageMgr"), @[@"Revoke", @"revoke"]));
+        MYLWeChatLog(@"CMessageMgr *DelMsg/AddMsg*: %@",
+            MYLFilterMethods(MYLMethodsOfClass(@"CMessageMgr"), @[@"DelMsg", @"AddMsg", @"DeleteMsg"]));
+        MYLWeChatLog(@"MMNewSessionMgr *Session*: %@",
+            MYLFilterMethods(MYLMethodsOfClass(@"MMNewSessionMgr"), @[@"Session", @"ession"]));
+        NSArray *nsmAll = MYLMethodsOfClass(@"MMNewSessionMgr");
+        if (nsmAll.count > 40) nsmAll = [nsmAll subarrayWithRange:NSMakeRange(0, 40)];
+        MYLWeChatLog(@"MMNewSessionMgr all-methods(count<=40): %@",
+            [nsmAll componentsJoinedByString:@", "]);
+        MYLWeChatLog(@"CContactMgr *ontact*: %@",
+            MYLFilterMethods(MYLMethodsOfClass(@"CContactMgr"), @[@"ontact", @"Contact"]));
     }
 
     MiYouLiteHookSessionMgr(); // 延迟重试安装会话 hook

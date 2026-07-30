@@ -45,7 +45,7 @@ static NSString *MYLLogPath(void) {
 
 static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 // 版本号需与 control 的 Version 字段、Tweak.xm 的日志版本串保持同步
-static NSString *const kMiYouLiteVersion = @"1.2.9";
+static NSString *const kMiYouLiteVersion = @"1.2.10";
 // roothide PreferenceLoader 存储 bundle 路径的 property key（与 prefs.xm 源码一致）
 static NSString *const PLBundleKey = @"pl_bundle";
 static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
