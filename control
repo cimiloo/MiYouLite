@@ -1,7 +1,7 @@
 Package: com.miyou.lite
 Name: MiYouLite
 Depends: preferenceloader, firmware (>= 15.0)
-Version: 1.2.10
+Version: 1.2.11
 Architecture: iphoneos-arm64e
 Description: Lite version - 防撤回 + 密友隐藏 (roothide), 设置页密码保护
 Maintainer: MiYou

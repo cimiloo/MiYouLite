@@ -98,11 +98,20 @@ static NSString *MYLFilterMethods(NSArray *methods, NSArray *keywords) {
 - (id)propertyForKey:(NSString *)key;
 @end
 
-// ── 跨进程共享配置：用「裸 plist 文件」绕开 roothide 下 CFPreferences 的
-//    按进程沙盒隔离。设置 App 写、微信读，二者访问同一绝对路径（裸 POSIX I/O
-//    不受 CFPreferences daemon 虚拟化影响）。 ──
+// ── 跨进程共享配置 ──
+// ★ 关键修复（roothide 跨进程隔离根因）：
+//   roothide 把每个 App 都关进各自的 jbroot 沙盒，/var/mobile/Library/Preferences
+//   与 .jbroot-*/Library/Preferences 都是「按 App 虚拟化」的——设置 App 写进自己
+//   jbroot 的副本，微信读自己 jbroot 的空副本，所以永远读不到对方。
+//   唯一能在所有 App 间共享的物理路径是 /rootfs/... ：roothide 官方文档明确
+//   「RootHide mounts the system root back into the jailbreak root at /rootfs/」，
+//   即 /rootfs 是真实系统根在 jbroot 视图里的挂载点，所有 App 看到的是同一份
+//   真实文件。故优先用 /rootfs/var/mobile/Library/Preferences，其余仅作兜底+诊断。
 static NSArray *MYLSharedConfigDirs(void) {
     NSMutableArray *a = [NSMutableArray array];
+    // ★ 真正跨进程共享的路径：真实系统根（非虚拟化）
+    [a addObject:@"/rootfs/var/mobile/Library/Preferences"];
+    // 兜底（仅当 /rootfs 不可用时，便于诊断）
     NSString *appBase = @"/var/containers/Bundle/Application";
     NSFileManager *fm = [NSFileManager defaultManager];
     if ([fm fileExistsAtPath:appBase]) {
@@ -114,7 +123,7 @@ static NSArray *MYLSharedConfigDirs(void) {
             }
         }
     }
-    [a addObject:@"/var/mobile/Library/Preferences"]; // 系统 App 可写，沙盒 App 可读
+    [a addObject:@"/var/mobile/Library/Preferences"];
     [a addObject:@"/tmp"];
     return a;
 }
@@ -241,15 +250,26 @@ static void MiYouLiteForceReloadSessions(void) {
     }
 }
 
-#pragma mark - 防撤回（基于原 MiYou.dylib 真实符号 onRevokeMsg:）
+#pragma mark - 防撤回（微信 8.0.75 真实符号：onRevokeMsg: 已废弃，改为 RevokeMsg:MsgWrap:Counter:）
 
 %hook CMessageMgr
-- (void)onRevokeMsg:(id)arg1 {
-    if ([MiYouLiteManager sharedManager].antiRevokeEnabled) {
-        MYLWeChatLog(@"*** 防撤回触发 *** arg1=%@", arg1);
+// 微信 8.0.75 单条消息撤回入口（诊断日志已确认该方法存在）
+- (void)RevokeMsg:(id)arg1 MsgWrap:(id)arg2 Counter:(id)arg3 {
+    MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
+    if (mgr.antiRevokeEnabled) {
+        MYLWeChatLog(@"*** 防撤回触发(RevokeMsg:MsgWrap:Counter:) *** msg=%@ wrap=%@", arg1, arg2);
+        return; // 拦截：不调用 %orig，撤回不生效
+    }
+    MYLWeChatLog(@"(防撤回未开启) 收到撤回请求 RevokeMsg:MsgWrap:Counter:");
+    %orig;
+}
+// 带 revokeTicket/viewController 的重载变体（同样拦截）
+- (void)RevokeMsg:(id)arg1 MsgWrap:(id)arg2 Counter:(id)arg3 revokeTicket:(id)arg4 viewController:(id)arg5 {
+    MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
+    if (mgr.antiRevokeEnabled) {
+        MYLWeChatLog(@"*** 防撤回触发(RevokeMsg:...:revokeTicket:viewController:) ***");
         return;
     }
-    MYLWeChatLog(@"(防撤回未开启) 收到撤回请求 arg1=%@", arg1);
     %orig;
 }
 %end
@@ -426,7 +446,7 @@ static void MiYouLiteHookPL(void);
 
 %ctor {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-    MYLLog(@"tweak loaded, version=1.2.10, process=%@, log=%@", bid ?: @"(unknown)", MYLLogFile());
+    MYLLog(@"tweak loaded, version=1.2.11, process=%@, log=%@", bid ?: @"(unknown)", MYLLogFile());
 
     // 诊断：微信侧报告关键类/方法是否存在 —— 用于确认 hook 目标符号是否过时（微信 8.0.75）
     if ([bid isEqualToString:@"com.tencent.xin"] || [bid isEqualToString:@"WeChat"]) {
@@ -443,9 +463,16 @@ static void MiYouLiteHookPL(void);
         // 把诊断详情写到「微信自己的容器」，Filza 可读（无需 log stream）
         NSString *scPath = MYLSharedConfigFile();
         NSDictionary *sc = MiYouLiteReadSharedConfig();
-        MYLWeChatLog(@"==== MiYouLite 微信诊断 (version=1.2.10) ====");
+        MYLWeChatLog(@"==== MiYouLite 微信诊断 (version=1.2.11) ====");
         MYLWeChatLog(@"bundleID=%@ docLog=%@", bid, MYLWeChatLogPath());
-        MYLWeChatLog(@"sharedConfigFile=%@", scPath);
+        // ★ 逐候选目录报告 com.miyou.lite.plist 是否存在，确认 /rootfs 是否真是共享路径
+        MYLWeChatLog(@"rootfsExists=%d", (int)[[NSFileManager defaultManager] fileExistsAtPath:@"/rootfs"]);
+        for (NSString *d in MYLSharedConfigDirs()) {
+            NSString *p = [d stringByAppendingPathComponent:@"com.miyou.lite.plist"];
+            MYLWeChatLog(@"candidate[%@] exists=%d", p,
+                (int)[[NSFileManager defaultManager] fileExistsAtPath:p]);
+        }
+        MYLWeChatLog(@"sharedConfigFile(resolved)=%@", scPath);
         MYLWeChatLog(@"sharedConfigFileExists=%d parsed=%@",
                      (int)[[NSFileManager defaultManager] fileExistsAtPath:scPath], sc ?: @"nil");
         if (sc) {

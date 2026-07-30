@@ -45,14 +45,16 @@ static NSString *MYLLogPath(void) {
 
 static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 // 版本号需与 control 的 Version 字段、Tweak.xm 的日志版本串保持同步
-static NSString *const kMiYouLiteVersion = @"1.2.10";
+static NSString *const kMiYouLiteVersion = @"1.2.11";
 // roothide PreferenceLoader 存储 bundle 路径的 property key（与 prefs.xm 源码一致）
 static NSString *const PLBundleKey = @"pl_bundle";
 static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
 
-#pragma mark - 跨进程共享配置（与 Tweak 共用：写裸 plist 文件，绕开 roothide 的 CFPreferences 沙盒隔离）
+#pragma mark - 跨进程共享配置（与 Tweak 共用：写裸 plist 文件到 /rootfs 真实系统根，绕开 roothide 按 App 虚拟化）
 static NSArray *MYLSharedConfigDirs(void) {
     NSMutableArray *a = [NSMutableArray array];
+    // ★ 优先写真实系统根 /rootfs（所有 App 共享同一物理文件）；其余仅兜底
+    [a addObject:@"/rootfs/var/mobile/Library/Preferences"];
     NSString *appBase = @"/var/containers/Bundle/Application";
     NSFileManager *fm = [NSFileManager defaultManager];
     if ([fm fileExistsAtPath:appBase]) {
