@@ -29,16 +29,7 @@ static NSString *MYLLogPath(void) {
 - (NSArray *)specifiers;
 - (NSArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
 - (void)reloadSpecifiers;
-- (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier;
-- (id)readPreferenceValue:(PSSpecifier *)specifier;
 - (NSBundle *)bundle;       // UIViewController 已声明，但编译器需见前向声明
-@end
-
-@interface PSSpecifier : NSObject
-@property (nonatomic, copy) NSString *identifier;
-@property (nonatomic, retain) id propertyDictionary;
-// roothide PL 在 specifier 上存 bundle 引用的 key
-- (id)propertyForKey:(NSString *)key;
 @end
 
 static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
@@ -109,6 +100,12 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
 // PSListController 基类不会自动从 Root.plist 加载 specifiers，它直接返回内部
 // _specifiers ivar（初始为 nil）。必须显式调用 loadSpecifiersFromPlistName:target:
 // 并把结果填进 _specifiers，否则面板永远空白（specifiers count = 0）。
+//
+// 注意：这里只负责「加载」specifiers；每个 specifier 的 取值/存值 完全交给
+// PSListController 内置的 readPreferenceValue:/setPreferenceValue:forSpecifier:，
+// 框架会按 Root.plist 里配置的 defaults(=com.miyou.lite) + key 走系统 CFPreferences。
+// 切勿自己再 override 这两个方法 —— 之前在内部访问 specifier.identifier /
+// propertyDictionary 会在 iOS 16 真实 PSSpecifier 上触发 unrecognized selector 崩溃。
 - (NSArray *)specifiers {
     if (!_mySpecifiers) {
         _mySpecifiers = [self loadSpecifiersFromPlistName:[self specifierPlistName] target:self];
@@ -145,46 +142,6 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
     // 清空缓存，下一次 specifiers getter 会重新从 Root.plist 加载
     _mySpecifiers = nil;
     [super reloadSpecifiers];
-}
-
-// ── 默认 get/set 回调 ──
-- (id)readPreferenceValue:(PSSpecifier *)specifier {
-    NSString *key = specifier.identifier ?: specifier.propertyDictionary[@"key"];
-    if (!key) return nil;
-
-    CFPropertyListRef val = CFPreferencesCopyValue(
-        (__bridge CFStringRef)key,
-        (__bridge CFStringRef)kMiYouLiteDomain,
-        kCFPreferencesCurrentUser,
-        kCFPreferencesAnyHost);
-
-    if (!val) {
-        id defVal = specifier.propertyDictionary[@"default"];
-        return defVal ?: @"";
-    }
-    return (__bridge_transfer id)val;
-}
-
-- (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
-    NSString *key = specifier.identifier ?: specifier.propertyDictionary[@"key"];
-    if (!key) return;
-
-    CFPreferencesSetValue(
-        (__bridge CFStringRef)key,
-        (__bridge CFStringRef)(value ?: @""),
-        (__bridge CFStringRef)kMiYouLiteDomain,
-        kCFPreferencesCurrentUser,
-        kCFPreferencesAnyHost);
-
-    CFPreferencesSynchronize(
-        (__bridge CFStringRef)kMiYouLiteDomain,
-        kCFPreferencesCurrentUser,
-        kCFPreferencesAnyHost);
-
-    CFNotificationCenterPostNotification(
-        CFNotificationCenterGetDarwinNotifyCenter(),
-        CFSTR("com.miyou.lite/settings-changed"),
-        NULL, NULL, TRUE);
 }
 
 // ── 密码弹窗 ──
