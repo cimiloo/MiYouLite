@@ -29,7 +29,10 @@ static NSString *MYLLogPath(void) {
     if (__lf) { fprintf(__lf, "[MiYouLite] %s\n", [__msg UTF8String]); fclose(__lf); } \
 } while(0)
 
-@class PSSpecifier;
+@interface PSSpecifier : NSObject
+- (id)propertyForKey:(NSString *)key;
+- (void)setProperty:(id)value forKey:(NSString *)key;
+@end
 
 // roothide-theos SDK 不含 Preferences 私有头 → 提供最小本地声明
 @interface PSListController : UIViewController
@@ -41,6 +44,8 @@ static NSString *MYLLogPath(void) {
 @end
 
 static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
+// 版本号需与 control 的 Version 字段、Tweak.xm 的日志版本串保持同步
+static NSString *const kMiYouLiteVersion = @"1.2.8";
 // roothide PreferenceLoader 存储 bundle 路径的 property key（与 prefs.xm 源码一致）
 static NSString *const PLBundleKey = @"pl_bundle";
 static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
@@ -126,6 +131,14 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
 - (NSArray *)specifiers {
     if (!_mySpecifiers) {
         _mySpecifiers = [self loadSpecifiersFromPlistName:[self specifierPlistName] target:self];
+        // 动态修正底部版本信息，避免 plist 硬编码版本号与代码失同步（之前漏改成旧版号）
+        for (PSSpecifier *sp in _mySpecifiers) {
+            NSString *ft = [sp propertyForKey:@"footerText"];
+            if (ft && [ft rangeOfString:@"MiYouLite"].location != NSNotFound) {
+                [sp setProperty:[NSString stringWithFormat:@"MiYouLite %@ · roothide · 微信 8.0.75", kMiYouLiteVersion]
+                         forKey:@"footerText"];
+            }
+        }
         // 同步基类 _specifiers ivar：部分 PSListController 内部直接读该 ivar 而非 getter
         if (_mySpecifiers) {
             @try { [self setValue:_mySpecifiers forKey:@"_specifiers"]; }
