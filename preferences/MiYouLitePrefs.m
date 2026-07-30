@@ -126,18 +126,13 @@ static void MiYouLiteWriteSharedConfig(NSDictionary *d) {
 }
 
 // ═══════════════════════════════════════════════
-// ★★★ 关键修复 ★★★
-// roothide 的 PLCustomListController 重写了此方法返回正确的 NSBundle。
-// 我们的子类也必须重写，否则 [self bundle] 返回 nil/错误 →
-// PSListController 找不到 Resources/Root.plist → 空白页！
-// ═══════════════════════════════════════════════
-// ═══════════════════════════════════════════════
-// ★★★ 关键修复 ★★★
+// ★★★ 关键修复（bundle 来源）★★★
 // roothide 的 PreferenceLoader 对 isController 条目，会把内部键 `PLBundleKey`
-// 设成「入口 plist 所在目录(/Library/PreferenceLoader/Preferences)」而非我们的 bundle！
-// 若直接返回它，PSListController 去该目录找 Resources/Root.plist 必然落空 → 一直空白。
-// 正确来源：基类 PSListController 依据 bundleForClass（本类就定义在我们的 bundle 内）
-// 或 specifier 关联的已加载 bundle，二者都指向 MiYouLitePrefs.bundle。
+// 设成「入口 plist 所在目录(/Library/PreferenceLoader/Preferences)」而非我们的 bundle；
+// PLCustomListController 的 bundle 方法也会回退到 PL 自身目录。若直接返回这些，
+// PSListController 去该目录找 Resources/Root.plist 必然落空 → 一直空白。
+// 正确来源：本类就定义在 MiYouLitePrefs.bundle 内，故 [super bundle] 即指向它；
+// 并辅以 jbroot 动态定位兜底（roothide 无 /var/jb）。
 // ═══════════════════════════════════════════════
 - (NSBundle *)bundle {
     // 只接受「确实包含 Root.plist」的 bundle，杜绝误用 PLBundleKey 指向的目录。
