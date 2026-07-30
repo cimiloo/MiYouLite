@@ -173,13 +173,17 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
     CFPropertyListRef v;
 
     // antiRevokeEnabled：优先共享文件，回退 CFPreferences
+    // ★ v1.2.13 默认开启防撤回：当共享文件与 CFPreferences 都没有该键时（首次跨进程尚未打通），
+    //   仍默认 YES，确保防撤回立即生效，便于验证 tweak 加载 + 符号修复是否正确。
+    BOOL antiFound = NO; BOOL antiVal = NO;
     if (sc && sc[@"antiRevokeEnabled"] != nil) {
-        _antiRevokeEnabled = [sc[@"antiRevokeEnabled"] boolValue];
+        antiFound = YES; antiVal = [sc[@"antiRevokeEnabled"] boolValue];
     } else {
         v = CFPreferencesCopyValue(CFSTR("antiRevokeEnabled"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-        _antiRevokeEnabled = (v && CFGetTypeID(v) == CFBooleanGetTypeID()) ? (BOOL)CFBooleanGetValue((CFBooleanRef)v) : NO;
+        if (v && CFGetTypeID(v) == CFBooleanGetTypeID()) { antiFound = YES; antiVal = (BOOL)CFBooleanGetValue((CFBooleanRef)v); }
         if (v) CFRelease(v);
     }
+    _antiRevokeEnabled = antiFound ? antiVal : YES;
     // hideModeEnabled
     if (sc && sc[@"hideModeEnabled"] != nil) {
         _hideModeEnabled = [sc[@"hideModeEnabled"] boolValue];
@@ -481,7 +485,7 @@ static void MiYouLiteHookPL(void);
 
 %ctor {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-    MYLLog(@"tweak loaded, version=1.2.12, process=%@, log=%@", bid ?: @"(unknown)", MYLLogFile());
+    MYLLog(@"tweak loaded, version=1.2.13, process=%@, log=%@", bid ?: @"(unknown)", MYLLogFile());
 
     // 诊断：微信侧报告关键类/方法是否存在 —— 用于确认 hook 目标符号是否过时（微信 8.0.75）
     if ([bid isEqualToString:@"com.tencent.xin"] || [bid isEqualToString:@"WeChat"]) {
@@ -498,7 +502,9 @@ static void MiYouLiteHookPL(void);
         // 把诊断详情写到「微信自己的容器」，Filza 可读（无需 log stream）
         NSString *scPath = MYLSharedConfigFile();
         NSDictionary *sc = MiYouLiteReadSharedConfig();
-        MYLWeChatLog(@"==== MiYouLite 微信诊断 (version=1.2.12) ====");
+        MYLWeChatLog(@"==== MiYouLite 微信诊断 (version=1.2.13) ====");
+        NSArray *myDocs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+        MYLWeChatLog(@"WeChat自身Data容器Documents=%@", myDocs.firstObject ?: @"(nil)");
         MYLWeChatLog(@"bundleID=%@ docLog=%@ configFile=%@", bid, MYLWeChatLogPath(), scPath);
         // ★ 用 POSIX access 验证 /rootfs 在微信里到底能否访问（fileExistsAtPath 可能被 sandbox 误导）
         if (access("/rootfs/var/mobile/Library/Preferences", R_OK|W_OK) == 0)

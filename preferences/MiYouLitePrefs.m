@@ -46,7 +46,7 @@ static NSString *MYLLogPath(void) {
 
 static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 // 版本号需与 control 的 Version 字段、Tweak.xm 的日志版本串保持同步
-static NSString *const kMiYouLiteVersion = @"1.2.12";
+static NSString *const kMiYouLiteVersion = @"1.2.13";
 // roothide PreferenceLoader 存储 bundle 路径的 property key（与 prefs.xm 源码一致）
 static NSString *const PLBundleKey = @"pl_bundle";
 static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
@@ -58,31 +58,33 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
 static NSString *MiYouLiteWeChatContainerDocs(void) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-    // 方法1：LSApplicationProxy（Preferences 进程可用）
+    // ★ 关键修正（v1.2.13）：必须解析「Data 容器」而非「Bundle 容器」。
+    //   微信 tweak 端用 NSSearchPathForDirectoriesInDomains(NSDocumentDirectory,…)
+    //   得到的是 Data 容器 <Data>/Application/<uuid>/Documents；之前误用 bundleURL
+    //   （Bundle 容器 <Bundle>/Application/<uuid>/WeChat.app）再删尾巴，写到了错误目录，
+    //   微信永远读不到 → 功能不生效。这里改用 dataContainerURL（真正的 Data 容器根）。
     Class LSApplicationProxy = objc_getClass("LSApplicationProxy");
     if (LSApplicationProxy && [LSApplicationProxy respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
         id proxy = [LSApplicationProxy performSelector:@selector(applicationProxyForIdentifier:) withObject:@"com.tencent.xin"];
-        if (proxy && [proxy respondsToSelector:@selector(bundleURL)]) {
-            NSURL *bundleURL = [proxy performSelector:@selector(bundleURL)];
-            NSString *path = [bundleURL path]; // .../WeChat.app
+        if (proxy && [proxy respondsToSelector:@selector(dataContainerURL)]) {
+            NSURL *dataURL = [proxy performSelector:@selector(dataContainerURL)];
+            NSString *path = [dataURL path]; // .../Data/Application/<uuid>
             if (path.length) {
-                NSString *container = [path stringByDeletingLastPathComponent]; // .../<uuid>
-                return [container stringByAppendingPathComponent:@"Documents"];
+                return [path stringByAppendingPathComponent:@"Documents"];
             }
         }
     }
-    // 方法2：枚举 /var/mobile/Containers/Data/Application 找 CFBundleIdentifier==com.tencent.xin
+    // 方法2：枚举 Data 容器，按 MCMMetadataIdentifier 匹配 com.tencent.xin
+    //   （.app 在 Bundle 容器，Data 容器里没有 .app，故不能按 .app/Info.plist 找，
+    //    要看每个 UUID 下的 .com.apple.mobile_container_manager.metadata.plist）
     NSString *base = @"/var/mobile/Containers/Data/Application";
     NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *uuid in [fm contentsOfDirectoryAtPath:base error:nil] ?: @[]) {
-        NSString *appDir = [base stringByAppendingPathComponent:uuid];
-        for (NSString *appName in [fm contentsOfDirectoryAtPath:appDir error:nil] ?: @[]) {
-            if (![appName hasSuffix:@".app"]) continue;
-            NSString *infoPath = [appDir stringByAppendingPathComponent:[appName stringByAppendingPathComponent:@"Info.plist"]];
-            NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
-            if ([[info objectForKey:@"CFBundleIdentifier"] isEqualToString:@"com.tencent.xin"]) {
-                return [appDir stringByAppendingPathComponent:@"Documents"];
-            }
+        NSString *meta = [base stringByAppendingPathComponent:
+            [uuid stringByAppendingPathComponent:@".com.apple.mobile_container_manager.metadata.plist"]];
+        NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:meta];
+        if ([[info objectForKey:@"MCMMetadataIdentifier"] isEqualToString:@"com.tencent.xin"]) {
+            return [base stringByAppendingPathComponent:[uuid stringByAppendingPathComponent:@"Documents"]];
         }
     }
 #pragma clang diagnostic pop
@@ -90,17 +92,18 @@ static NSString *MiYouLiteWeChatContainerDocs(void) {
 }
 static void MiYouLiteWriteSharedConfig(NSDictionary *d) {
     if (!d) return;
-    // ★ 候选写入路径（与微信读取优先级一致）：微信容器真实路径 → /var/mobile 顶层 → 虚拟化兜底
+    // ★ 候选写入路径（与微信读取优先级一致）：微信 Data 容器 Documents → 虚拟化兜底
     NSMutableArray *dirs = [NSMutableArray array];
     NSString *wxDocs = MiYouLiteWeChatContainerDocs();
+    MYLLog(@"resolved WeChat data-container Documents = %@", wxDocs ?: @"(nil — 解析失败)");
     if (wxDocs) [dirs addObject:wxDocs];
-    [dirs addObject:@"/var/mobile"];
     [dirs addObject:@"/var/mobile/Library/Preferences"];
     NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *dir in dirs) {
         [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
         NSString *p = [dir stringByAppendingPathComponent:@"com.miyou.lite.plist"];
         if ([d writeToFile:p atomically:YES]) { MYLLog(@"shared config written -> %@", p); return; }
+        MYLLog(@"write FAILED -> %@ (errno 占位)", p);
     }
     MYLLog(@"shared config write FAILED（所有候选路径均不可写）");
 }
