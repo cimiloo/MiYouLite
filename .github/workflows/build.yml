@@ -29,12 +29,22 @@ jobs:
 
       - name: Build
         run: |
-          set -e
           cd "$GITHUB_WORKSPACE"
           # 清掉所有可能残留的旧 deb，避免 find 捞到过时版本
           rm -rf packages
           find "$GITHUB_WORKSPACE" -maxdepth 2 -name '*.deb' -delete || true
-          make package FINALPACKAGE=1
+          # 捕获 make 输出，并把报错行转成 GitHub error 注解，便于外部（无 admin 权限）诊断
+          set +e
+          make package FINALPACKAGE=1 2>&1 | tee build_output.log
+          RC=${PIPESTATUS[0]}
+          set -e
+          grep -E "error:|fatal error:|No such file or directory|make\[|Makefile" build_output.log \
+            | sed 's|^|::error::|' || true
+          if [ "$RC" -ne 0 ]; then
+            echo "=== BUILD FAILED rc=$RC ==="
+            tail -n 40 build_output.log
+            exit "$RC"
+          fi
           DEB_FILE=$(find "$GITHUB_WORKSPACE/packages" -name '*.deb' | head -1)
           if [ -z "$DEB_FILE" ]; then
             echo "ERROR: no deb produced under packages/"
