@@ -243,8 +243,8 @@ static void MiYouLiteForceReloadSessions(void) {
 //   method_setImplementation 临时把该 selector 恢复为原始实现，使原始内部的 self-dispatch
 //   也走原始（不再进 hook），递归自然终止。pthread_mutex 保护 swap+call 区间，避免并发错乱。
 
-typedef void (*OrigRevoke3)(id, SEL, id, id, id);
-typedef void (*OrigRevoke5)(id, SEL, id, id, id, id, id);
+typedef void (*OrigRevoke3)(id, SEL, void*, void*, void*);
+typedef void (*OrigRevoke5)(id, SEL, void*, void*, void*, void*, void*);
 
 static OrigRevoke3 g_origRevoke3 = NULL;
 static OrigRevoke5 g_origRevoke5 = NULL;
