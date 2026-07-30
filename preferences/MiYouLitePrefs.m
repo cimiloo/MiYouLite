@@ -3,14 +3,22 @@
 
 // 诊断日志：写文件，绕过系统 log 命令兼容性问题。
 // 自动选择可用目录并建目录，确保 cat 一定有输出。
-// 装后可在 NewTerm 执行：cat /var/jb/tmp/miyoulite_prefs.log 查看（或 /tmp/...）
+// ★ roothide 没有 /var/jb 目录，日志统一写到真实 rootfs 的 /tmp。
+//   装后可在 NewTerm / Filza 执行：cat /tmp/miyoulite_prefs.log 查看。
 #import <stdio.h>
 static NSString *MYLLogPath(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *dirs = @[ @"/var/jb/tmp", @"/tmp", @"/var/tmp" ];
+    // roothide 无 /var/jb；优先用真实 rootfs 的 /tmp（已验证 Preferences 可写、Filza 可见）
+    NSArray *dirs = @[ @"/tmp", @"/var/mobile/Library/Logs", @"/var/tmp" ];
     NSString *d = nil;
-    for (NSString *c in dirs) { if ([fm fileExistsAtPath:c]) { d = c; break; } }
-    if (!d) { d = @"/var/jb/tmp"; [fm createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil]; }
+    for (NSString *c in dirs) {
+        // 目录已存在，或我们能在 roothide 下创建它 → 选它
+        if ([fm fileExistsAtPath:c] ||
+            [fm createDirectoryAtPath:c withIntermediateDirectories:YES attributes:nil error:nil]) {
+            d = c; break;
+        }
+    }
+    if (!d) d = @"/tmp";
     return [d stringByAppendingPathComponent:@"miyoulite_prefs.log"];
 }
 #define MYLLog(...) do { \
@@ -65,9 +73,13 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
 // ═══════════════════════════════════════════════
 - (NSBundle *)bundle {
     // 只接受「确实包含 Root.plist」的 bundle，杜绝误用 PLBundleKey 指向的目录。
+    NSFileManager *fm = [NSFileManager defaultManager];
     NSBundle *(^hasRoot)(NSBundle *) = ^NSBundle *(NSBundle *b) {
         if (b && [b pathForResource:@"Root" ofType:@"plist"]) return b;
         return nil;
+    };
+    NSBundle *(^checkPath)(NSString *) = ^NSBundle *(NSString *p) {
+        return hasRoot([NSBundle bundleWithPath:p]);
     };
 
     NSBundle *b = [super bundle];
@@ -76,14 +88,19 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
         return b;
     }
 
-    // 兜底：roothide 下 bundle 实际装在 /var/jb/Library/PreferenceBundles/
-    for (NSString *p in @[
-        @"/Library/PreferenceBundles/MiYouLitePrefs.bundle",
-        @"/var/jb/Library/PreferenceBundles/MiYouLitePrefs.bundle"]) {
-        NSBundle *cand = [NSBundle bundleWithPath:p];
-        if (hasRoot(cand)) {
-            MYLLog(@"bundle(fixed): %@", cand.bundlePath);
-            return cand;
+    // 兜底：roothide 下 bundle 实际装在 jbroot
+    // (/var/containers/Bundle/Application/.jbroot-*/Library/PreferenceBundles/)。
+    // ★ roothide 没有 /var/jb，这里动态定位 jbroot，不再硬编码 /var/jb 路径。
+    NSBundle *cand = checkPath(@"/Library/PreferenceBundles/MiYouLitePrefs.bundle");
+    if (cand) { MYLLog(@"bundle(fixed): %@", cand.bundlePath); return cand; }
+
+    NSString *jbrootBase = @"/var/containers/Bundle/Application/";
+    for (NSString *s in ([fm contentsOfDirectoryAtPath:jbrootBase error:nil] ?: @[])) {
+        if ([s hasPrefix:@".jbroot-"]) {
+            NSString *p = [jbrootBase stringByAppendingPathComponent:
+                [s stringByAppendingPathComponent:@"Library/PreferenceBundles/MiYouLitePrefs.bundle"]];
+            NSBundle *c = checkPath(p);
+            if (c) { MYLLog(@"bundle(fixed): %@", c.bundlePath); return c; }
         }
     }
 

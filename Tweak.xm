@@ -7,10 +7,16 @@
 // ── 诊断日志（与设置 bundle 共用文件名，自动建目录 + 多候选路径）──
 static NSString *MYLLogPath(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *dirs = @[ @"/var/jb/tmp", @"/tmp", @"/var/tmp" ];
+    // roothide 无 /var/jb；优先用真实 rootfs 的 /tmp（已验证 Preferences/WeChat 可写、Filza 可见）
+    NSArray *dirs = @[ @"/tmp", @"/var/mobile/Library/Logs", @"/var/tmp" ];
     NSString *d = nil;
-    for (NSString *c in dirs) { if ([fm fileExistsAtPath:c]) { d = c; break; } }
-    if (!d) { d = @"/var/jb/tmp"; [fm createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil]; }
+    for (NSString *c in dirs) {
+        if ([fm fileExistsAtPath:c] ||
+            [fm createDirectoryAtPath:c withIntermediateDirectories:YES attributes:nil error:nil]) {
+            d = c; break;
+        }
+    }
+    if (!d) d = @"/tmp";
     return [d stringByAppendingPathComponent:@"miyoulite_prefs.log"];
 }
 #define MYLLog(...) do { \
@@ -244,7 +250,7 @@ static void MiYouLiteSettingsChanged(CFNotificationCenterRef center,
 
 %ctor {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-    MYLLog(@"tweak loaded, version=1.2.5, process=%@", bid ?: @"(unknown)");
+    MYLLog(@"tweak loaded, version=1.2.7, process=%@", bid ?: @"(unknown)");
     Class sessionMgrClass = objc_getClass("MMNewSessionMgr");
     if (sessionMgrClass) {
         Method mCount = class_getInstanceMethod(sessionMgrClass, @selector(GetSessionCount));
@@ -280,10 +286,10 @@ static void MiYouLiteTryPreload(void) {
     // 候选路径：roothide 的 jbroot 实际位于 /var/containers/Bundle/Application/.jbroot-*/，
     // /var/jb 软链未必能被 NSBundle 正确识别，故动态探测真实 jbroot。
     NSMutableArray *cands = [NSMutableArray arrayWithArray:@[
-        @"/var/jb/Library/PreferenceBundles/MiYouLitePrefs.bundle",
         @"/Library/PreferenceBundles/MiYouLitePrefs.bundle"
     ]];
     // 扫描 /var/containers/Bundle/Application/ 下的 .jbroot-* 目录
+    // ★ roothide 无 /var/jb，动态定位真实 jbroot，不再硬编码 /var/jb 路径。
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *appBase = @"/var/containers/Bundle/Application";
     if ([fm fileExistsAtPath:appBase]) {
@@ -337,9 +343,20 @@ static NSBundle *MiYouLite_PLBundle(id self, SEL _cmd) {
     }
     if ([lazy isKindOfClass:[NSString class]] &&
         [lazy rangeOfString:@"MiYouLitePrefs"].location != NSNotFound) {
-        for (NSString *p in @[
-            @"/Library/PreferenceBundles/MiYouLitePrefs.bundle",
-            @"/var/jb/Library/PreferenceBundles/MiYouLitePrefs.bundle"]) {
+        NSMutableArray *paths = [NSMutableArray arrayWithArray:@[
+            @"/Library/PreferenceBundles/MiYouLitePrefs.bundle"]];
+        // roothide 无 /var/jb，动态定位 jbroot（/var/containers/Bundle/Application/.jbroot-*/）
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *appBase = @"/var/containers/Bundle/Application";
+        if ([fm fileExistsAtPath:appBase]) {
+            for (NSString *s in [fm contentsOfDirectoryAtPath:appBase error:nil] ?: @[]) {
+                if ([s hasPrefix:@".jbroot"]) {
+                    [paths addObject:[appBase stringByAppendingPathComponent:
+                        [s stringByAppendingPathComponent:@"Library/PreferenceBundles/MiYouLitePrefs.bundle"]]];
+                }
+            }
+        }
+        for (NSString *p in paths) {
             NSBundle *b = [NSBundle bundleWithPath:p];
             if (b && [b pathForResource:@"Root" ofType:@"plist"]) {
                 MYLLog(@"PLFallback: bundle redirected -> %@", p);
