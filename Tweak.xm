@@ -91,16 +91,8 @@ static NSDictionary *MiYouLiteReadSharedConfig(void) {
     return [NSDictionary dictionaryWithContentsOfFile:p];
 }
 
-static void MiYouLiteWriteSharedConfig(NSDictionary *d) {
-    if (!d) return;
-    NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *dir in MYLSharedConfigDirs()) {
-        [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-        NSString *p = [dir stringByAppendingPathComponent:@"com.miyou.lite.plist"];
-        if ([d writeToFile:p atomically:YES]) { MYLLog(@"shared config written -> %@", p); return; }
-    }
-    MYLLog(@"shared config write FAILED (all candidate dirs)");
-}
+// 注：MiYouLiteWriteSharedConfig 仅由设置面板（MiYouLitePrefs.m）调用，
+// Tweak 进程本身只读取共享配置，故此处不重复定义，避免「未使用函数」被新版 clang 当 error。
 
 #pragma mark - 配置管理器
 

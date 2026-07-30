@@ -7,7 +7,7 @@ include $(THEOS)/makefiles/common.mk
 # ── Tweak: 防撤回 + 密友隐藏 ──
 TWEAK_NAME = MiYouLite
 MiYouLite_FILES = Tweak.xm
-MiYouLite_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-error=implicit-function-declaration
+MiYouLite_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-error
 MiYouLite_FRAMEWORKS = UIKit Foundation
 include $(THEOS_MAKE_PATH)/tweak.mk
 

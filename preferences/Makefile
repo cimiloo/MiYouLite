@@ -5,7 +5,7 @@ include $(THEOS)/makefiles/common.mk
 # 该 bundle 由 Preferences.app 加载，运行期符号必然存在；故链接器对未定义符号做动态查找。
 BUNDLE_NAME = MiYouLitePrefs
 MiYouLitePrefs_FILES = MiYouLitePrefs.m
-MiYouLitePrefs_CFLAGS = -fobjc-arc
+MiYouLitePrefs_CFLAGS = -fobjc-arc -Wno-error
 MiYouLitePrefs_FRAMEWORKS = UIKit Foundation
 MiYouLitePrefs_LDFLAGS = -Wl,-undefined,dynamic_lookup
 MiYouLitePrefs_INSTALL_PATH = /Library/PreferenceBundles
