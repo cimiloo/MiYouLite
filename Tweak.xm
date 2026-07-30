@@ -244,7 +244,7 @@ static void MiYouLiteSettingsChanged(CFNotificationCenterRef center,
 
 %ctor {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-    MYLLog(@"tweak loaded, version=1.2.4, process=%@", bid ?: @"(unknown)");
+    MYLLog(@"tweak loaded, version=1.2.5, process=%@", bid ?: @"(unknown)");
     Class sessionMgrClass = objc_getClass("MMNewSessionMgr");
     if (sessionMgrClass) {
         Method mCount = class_getInstanceMethod(sessionMgrClass, @selector(GetSessionCount));
@@ -277,10 +277,25 @@ static void MiYouLiteSettingsChanged(CFNotificationCenterRef center,
 // （另见下方 MiYouLiteHookPL：即使预加载时序失败，也通过 hook 兜底。）
 
 static void MiYouLiteTryPreload(void) {
-    NSArray *cands = @[
+    // 候选路径：roothide 的 jbroot 实际位于 /var/containers/Bundle/Application/.jbroot-*/，
+    // /var/jb 软链未必能被 NSBundle 正确识别，故动态探测真实 jbroot。
+    NSMutableArray *cands = [NSMutableArray arrayWithArray:@[
         @"/var/jb/Library/PreferenceBundles/MiYouLitePrefs.bundle",
         @"/Library/PreferenceBundles/MiYouLitePrefs.bundle"
-    ];
+    ]];
+    // 扫描 /var/containers/Bundle/Application/ 下的 .jbroot-* 目录
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *appBase = @"/var/containers/Bundle/Application";
+    if ([fm fileExistsAtPath:appBase]) {
+        NSArray *subs = [fm contentsOfDirectoryAtPath:appBase error:nil];
+        for (NSString *s in subs) {
+            if ([s hasPrefix:@".jbroot"]) {
+                NSString *p = [appBase stringByAppendingPathComponent:
+                    [s stringByAppendingPathComponent:@"Library/PreferenceBundles/MiYouLitePrefs.bundle"]];
+                [cands addObject:p];
+            }
+        }
+    }
     for (NSString *p in cands) {
         NSBundle *b = [NSBundle bundleWithPath:p];
         if (!b) continue;
@@ -292,7 +307,7 @@ static void MiYouLiteTryPreload(void) {
                p, ok, clsOK, e ? [e localizedDescription] : @"none");
         if (ok) return;
     }
-    MYLLog(@"preload FAILED: bundle not loaded from any candidate");
+    MYLLog(@"preload: bundle not preloaded (will lazy-load on tap; non-fatal)");
 }
 
 __attribute__((constructor))

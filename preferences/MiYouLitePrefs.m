@@ -27,6 +27,7 @@ static NSString *MYLLogPath(void) {
 @interface PSListController : UIViewController
 - (NSString *)specifierPlistName;
 - (NSArray *)specifiers;
+- (NSArray *)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
 - (void)reloadSpecifiers;
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier;
 - (id)readPreferenceValue:(PSSpecifier *)specifier;
@@ -50,6 +51,7 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
 
 @implementation MiYouLitePrefsController {
     BOOL _authed;
+    NSArray *_mySpecifiers;
 }
 
 + (void)initialize {
@@ -103,12 +105,22 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
     return @"Root";
 }
 
-// 日志透传，不改变行为
+// ★★★ 关键修复 ★★★
+// PSListController 基类不会自动从 Root.plist 加载 specifiers，它直接返回内部
+// _specifiers ivar（初始为 nil）。必须显式调用 loadSpecifiersFromPlistName:target:
+// 并把结果填进 _specifiers，否则面板永远空白（specifiers count = 0）。
 - (NSArray *)specifiers {
-    NSArray *s = [super specifiers];
+    if (!_mySpecifiers) {
+        _mySpecifiers = [self loadSpecifiersFromPlistName:[self specifierPlistName] target:self];
+        // 同步基类 _specifiers ivar：部分 PSListController 内部直接读该 ivar 而非 getter
+        if (_mySpecifiers) {
+            @try { [self setValue:_mySpecifiers forKey:@"_specifiers"]; }
+            @catch (NSException *e) { MYLLog(@"set _specifiers ivar failed: %@", e); }
+        }
+    }
     MYLLog(@"specifiers count = %lu, bundle=%@",
-           (unsigned long)s.count, [self bundle]);
-    return s;
+           (unsigned long)(_mySpecifiers ? _mySpecifiers.count : 0), [self bundle]);
+    return _mySpecifiers;
 }
 
 - (void)viewDidLoad {
@@ -130,6 +142,8 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
 }
 
 - (void)reloadSpecifiers {
+    // 清空缓存，下一次 specifiers getter 会重新从 Root.plist 加载
+    _mySpecifiers = nil;
     [super reloadSpecifiers];
 }
 
