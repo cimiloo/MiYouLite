@@ -4,37 +4,105 @@
 #import <substrate.h>
 #import <stdio.h>
 
-// ── 诊断日志（与设置 bundle 共用文件名，自动建目录 + 多候选路径）──
-static NSString *MYLLogPath(void) {
+#pragma mark - 诊断日志（多候选路径，自动建目录；同时打到 syslog 便于跨沙盒验证）
+
+// roothide 下各进程（系统 App / 沙盒 App）对 /tmp 的可见性不一，
+// 故尝试多个候选目录，选第一个可写者；并把「最终落盘路径」打到 syslog，
+// 方便用户在真机上确认日志到底写到了哪里（尤其微信这种沙盒进程）。
+static NSArray *MYLCandidateLogDirs(void) {
+    NSMutableArray *a = [NSMutableArray arrayWithArray:@[ @"/tmp", @"/var/mobile/Library/Preferences", @"/var/tmp" ]];
+    NSString *appBase = @"/var/containers/Bundle/Application";
     NSFileManager *fm = [NSFileManager defaultManager];
-    // roothide 无 /var/jb；优先用真实 rootfs 的 /tmp（已验证 Preferences/WeChat 可写、Filza 可见）
-    NSArray *dirs = @[ @"/tmp", @"/var/mobile/Library/Logs", @"/var/tmp" ];
-    NSString *d = nil;
-    for (NSString *c in dirs) {
-        if ([fm fileExistsAtPath:c] ||
-            [fm createDirectoryAtPath:c withIntermediateDirectories:YES attributes:nil error:nil]) {
-            d = c; break;
+    if ([fm fileExistsAtPath:appBase]) {
+        for (NSString *s in [fm contentsOfDirectoryAtPath:appBase error:nil] ?: @[]) {
+            if ([s hasPrefix:@".jbroot"]) {
+                // 真实 jbroot（roothide 无 /var/jb）：优先写这里，Settings 与微信都能读到
+                [a insertObject:[appBase stringByAppendingPathComponent:
+                    [s stringByAppendingPathComponent:@"Library/Preferences"]] atIndex:0];
+                break;
+            }
         }
     }
-    if (!d) d = @"/tmp";
-    return [d stringByAppendingPathComponent:@"miyoulite_prefs.log"];
+    // 进程自身沙盒 tmp（沙盒 App 必定可写，作为最后兜底）
+    NSString *homeTmp = NSTemporaryDirectory();
+    if (homeTmp.length) [a addObject:homeTmp];
+    return a;
 }
+
+static NSString *MYLLogFile(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *d in MYLCandidateLogDirs()) {
+        if ([fm fileExistsAtPath:d] || [fm createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil]) {
+            return [d stringByAppendingPathComponent:@"miyoulite_prefs.log"];
+        }
+    }
+    return @"/tmp/miyoulite_prefs.log";
+}
+
 #define MYLLog(...) do { \
-    NSString *__m = [NSString stringWithFormat:__VA_ARGS__]; \
-    NSLog(@"[MiYouLite] %@", __m); \
-    NSString *__p = MYLLogPath(); \
+    NSString *__msg = [NSString stringWithFormat:__VA_ARGS__]; \
+    NSLog(@"[MiYouLite] %@", __msg); \
+    NSString *__p = MYLLogFile(); \
     FILE *__lf = fopen([__p UTF8String], "a"); \
-    if (__lf) { fprintf(__lf, "[MiYouLite] %s\n", [__m UTF8String]); fclose(__lf); } \
+    if (__lf) { fprintf(__lf, "[MiYouLite] %s\n", [__msg UTF8String]); fclose(__lf); } \
 } while(0)
 
 @interface PSSpecifier : NSObject
 - (id)propertyForKey:(NSString *)key;
 @end
 
-// 前向声明：为 roothide PL 的 PLCustomListController.bundle 安装回退 hook
-static void MiYouLiteHookPL(void);
+// ── 跨进程共享配置：用「裸 plist 文件」绕开 roothide 下 CFPreferences 的
+//    按进程沙盒隔离。设置 App 写、微信读，二者访问同一绝对路径（裸 POSIX I/O
+//    不受 CFPreferences daemon 虚拟化影响）。 ──
+static NSArray *MYLSharedConfigDirs(void) {
+    NSMutableArray *a = [NSMutableArray array];
+    NSString *appBase = @"/var/containers/Bundle/Application";
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:appBase]) {
+        for (NSString *s in [fm contentsOfDirectoryAtPath:appBase error:nil] ?: @[]) {
+            if ([s hasPrefix:@".jbroot"]) {
+                [a addObject:[appBase stringByAppendingPathComponent:
+                    [s stringByAppendingPathComponent:@"Library/Preferences"]]];
+                break;
+            }
+        }
+    }
+    [a addObject:@"/var/mobile/Library/Preferences"]; // 系统 App 可写，沙盒 App 可读
+    [a addObject:@"/tmp"];
+    return a;
+}
 
-#pragma mark - 配置管理器（CFPreferences 标准域，与设置 app 共享）
+static NSString *MYLSharedConfigFile(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *d in MYLSharedConfigDirs()) {
+        NSString *p = [d stringByAppendingPathComponent:@"com.miyou.lite.plist"];
+        if ([fm fileExistsAtPath:p]) return p;
+    }
+    for (NSString *d in MYLSharedConfigDirs()) {
+        if ([fm createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil])
+            return [d stringByAppendingPathComponent:@"com.miyou.lite.plist"];
+    }
+    return [@"/var/mobile/Library/Preferences" stringByAppendingPathComponent:@"com.miyou.lite.plist"];
+}
+
+static NSDictionary *MiYouLiteReadSharedConfig(void) {
+    NSString *p = MYLSharedConfigFile();
+    if (!p) return nil;
+    return [NSDictionary dictionaryWithContentsOfFile:p];
+}
+
+static void MiYouLiteWriteSharedConfig(NSDictionary *d) {
+    if (!d) return;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *dir in MYLSharedConfigDirs()) {
+        [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *p = [dir stringByAppendingPathComponent:@"com.miyou.lite.plist"];
+        if ([d writeToFile:p atomically:YES]) { MYLLog(@"shared config written -> %@", p); return; }
+    }
+    MYLLog(@"shared config write FAILED (all candidate dirs)");
+}
+
+#pragma mark - 配置管理器
 
 static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 
@@ -43,8 +111,8 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 @property (nonatomic, assign) BOOL antiRevokeEnabled;
 @property (nonatomic, assign) BOOL hideModeEnabled;
 @property (nonatomic, strong) NSString *password;
-@property (nonatomic, strong) NSArray *hiddenFriends; // wxid 列表（单聊/群均按 wxid 隐藏）
-@property (nonatomic, assign) BOOL isUnlocked;         // 搜索框密码验证通过后为 YES
+@property (nonatomic, strong) NSArray *hiddenFriends;
+@property (nonatomic, assign) BOOL isUnlocked;
 - (BOOL)isHidden:(NSString *)usrName;
 - (void)reload;
 @end
@@ -65,27 +133,52 @@ static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
     return self;
 }
 - (void)reload {
+    NSDictionary *sc = MiYouLiteReadSharedConfig();
     CFStringRef domain = (__bridge CFStringRef)kMiYouLiteDomain;
     CFPropertyListRef v;
-    v = CFPreferencesCopyValue(CFSTR("antiRevokeEnabled"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-    _antiRevokeEnabled = (v && CFGetTypeID(v) == CFBooleanGetTypeID()) ? (BOOL)CFBooleanGetValue((CFBooleanRef)v) : NO;
-    if (v) CFRelease(v);
-    v = CFPreferencesCopyValue(CFSTR("hideModeEnabled"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-    _hideModeEnabled = (v && CFGetTypeID(v) == CFBooleanGetTypeID()) ? (BOOL)CFBooleanGetValue((CFBooleanRef)v) : NO;
-    if (v) CFRelease(v);
-    v = CFPreferencesCopyValue(CFSTR("password"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-    _password = (v && CFGetTypeID(v) == CFStringGetTypeID()) ? (__bridge_transfer NSString *)v : @"";
-    if (v && CFGetTypeID(v) != CFStringGetTypeID()) CFRelease(v);
-    // hiddenFriends 在设置 app 中以换行分隔的字符串存储，这里转为数组
-    v = CFPreferencesCopyValue(CFSTR("hiddenFriends"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-    NSString *raw = (v && CFGetTypeID(v) == CFStringGetTypeID()) ? (__bridge_transfer NSString *)v : @"";
-    if (v && CFGetTypeID(v) != CFStringGetTypeID()) CFRelease(v);
+
+    // antiRevokeEnabled：优先共享文件，回退 CFPreferences
+    if (sc && sc[@"antiRevokeEnabled"] != nil) {
+        _antiRevokeEnabled = [sc[@"antiRevokeEnabled"] boolValue];
+    } else {
+        v = CFPreferencesCopyValue(CFSTR("antiRevokeEnabled"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        _antiRevokeEnabled = (v && CFGetTypeID(v) == CFBooleanGetTypeID()) ? (BOOL)CFBooleanGetValue((CFBooleanRef)v) : NO;
+        if (v) CFRelease(v);
+    }
+    // hideModeEnabled
+    if (sc && sc[@"hideModeEnabled"] != nil) {
+        _hideModeEnabled = [sc[@"hideModeEnabled"] boolValue];
+    } else {
+        v = CFPreferencesCopyValue(CFSTR("hideModeEnabled"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        _hideModeEnabled = (v && CFGetTypeID(v) == CFBooleanGetTypeID()) ? (BOOL)CFBooleanGetValue((CFBooleanRef)v) : NO;
+        if (v) CFRelease(v);
+    }
+    // password
+    if (sc && sc[@"password"] != nil) {
+        _password = [sc[@"password"] copy] ?: @"";
+    } else {
+        v = CFPreferencesCopyValue(CFSTR("password"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        _password = (v && CFGetTypeID(v) == CFStringGetTypeID()) ? (__bridge_transfer NSString *)v : @"";
+        if (v && CFGetTypeID(v) != CFStringGetTypeID()) CFRelease(v);
+    }
+    // hiddenFriends（设置 app 中以换行分隔的字符串存储）
+    NSString *raw = nil;
+    if (sc && sc[@"hiddenFriends"] != nil) {
+        raw = [sc[@"hiddenFriends"] isKindOfClass:[NSString class]] ? sc[@"hiddenFriends"] : [sc[@"hiddenFriends"] description];
+    } else {
+        v = CFPreferencesCopyValue(CFSTR("hiddenFriends"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        raw = (v && CFGetTypeID(v) == CFStringGetTypeID()) ? (__bridge_transfer NSString *)v : @"";
+        if (v && CFGetTypeID(v) != CFStringGetTypeID()) CFRelease(v);
+    }
     NSMutableArray *arr = [NSMutableArray array];
     for (NSString *line in [raw componentsSeparatedByString:@"\n"]) {
         NSString *t = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (t.length > 0) [arr addObject:t];
     }
     _hiddenFriends = arr;
+    MYLLog(@"reload: antiRevoke=%d hide=%d friends=%lu pwd=%lu src=%@",
+           _antiRevokeEnabled, _hideModeEnabled, (unsigned long)_hiddenFriends.count,
+           (unsigned long)_password.length, sc ? @"shared-file" : @"CFPreferences");
 }
 - (BOOL)isHidden:(NSString *)usrName {
     if (!self.hideModeEnabled || self.isUnlocked) return NO;
@@ -114,7 +207,7 @@ static void MiYouLiteForceReloadSessions(void) {
 %hook CMessageMgr
 - (void)onRevokeMsg:(id)arg1 {
     if ([MiYouLiteManager sharedManager].antiRevokeEnabled) {
-        NSLog(@"[MiYouLite] 拦截撤回: %@", arg1);
+        MYLLog(@"拦截撤回: %@", arg1);
         return;
     }
     %orig;
@@ -153,12 +246,15 @@ static void MiYouLiteForceReloadSessions(void) {
 
 #pragma mark - 密友 - 过滤会话（MMNewSessionMgr.GetSessionCount/GetSessionAtIndex:，字段 m_nsUserName）
 // 使用 MSHookMessageEx 手动 hook，以便拿到 original IMP，避免递归死循环。
+// ★ 修复：原先在 %ctor 里急切安装，但当时 MMNewSessionMgr 类尚未加载 → 永远装不上。
+//   现改为「延迟重试安装」，直到该类可用为止（与 PLCustomListController 同思路）。
 
 typedef int (*OrigGetSessionCount)(id, SEL);
 typedef id  (*OrigGetSessionAtIndex)(id, SEL, int);
 
 static OrigGetSessionCount  g_origGetSessionCount = NULL;
 static OrigGetSessionAtIndex g_origGetSessionAtIndex = NULL;
+static int g_sessionRetry = 0;
 
 static int MiYouLite_GetSessionCount(id self, SEL _cmd) {
     int count = g_origGetSessionCount(self, _cmd);
@@ -194,6 +290,27 @@ static id MiYouLite_GetSessionAtIndex(id self, SEL _cmd, int arg1) {
     return nil;
 }
 
+static void MiYouLiteHookSessionMgr(void) {
+    Class cls = objc_getClass("MMNewSessionMgr");
+    if (!cls) {
+        if (g_sessionRetry++ < 60) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ MiYouLiteHookSessionMgr(); });
+        } else {
+            MYLLog(@"MMNewSessionMgr 始终未加载，会话隐藏禁用");
+        }
+        return;
+    }
+    if (g_origGetSessionCount) return; // 已安装
+    Method mCount = class_getInstanceMethod(cls, @selector(GetSessionCount));
+    Method mIndex = class_getInstanceMethod(cls, @selector(GetSessionAtIndex:));
+    if (mCount) MSHookMessageEx(cls, @selector(GetSessionCount),
+                                (IMP)MiYouLite_GetSessionCount, (IMP *)&g_origGetSessionCount);
+    if (mIndex) MSHookMessageEx(cls, @selector(GetSessionAtIndex:),
+                                (IMP)MiYouLite_GetSessionAtIndex, (IMP *)&g_origGetSessionAtIndex);
+    MYLLog(@"MMNewSessionMgr hooks 已安装 (count=%d index=%d)", mCount != nil, mIndex != nil);
+}
+
 #pragma mark - 密友 - 搜索框密码解锁（UISearchBar.textField EditingChanged）
 
 %hook UISearchBar
@@ -227,7 +344,7 @@ static id MiYouLite_GetSessionAtIndex(id self, SEL _cmd, int arg1) {
         if ([textField.text isEqualToString:mgr.password]) {
             mgr.isUnlocked = YES;
             MiYouLiteForceReloadSessions();
-            NSLog(@"[MiYouLite] 密码匹配，已解锁密友");
+            MYLLog(@"密码匹配，已解锁密友");
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 mgr.isUnlocked = NO;
                 MiYouLiteForceReloadSessions();
@@ -237,7 +354,7 @@ static id MiYouLite_GetSessionAtIndex(id self, SEL _cmd, int arg1) {
 }
 %end
 
-#pragma mark - 构造函数：安装 MMNewSessionMgr 手动 hook + 设置变更监听
+#pragma mark - 设置变更通知（由设置 App 发出，微信收到后热重载 + 刷新会话）
 
 static void MiYouLiteSettingsChanged(CFNotificationCenterRef center,
                                      void *observer,
@@ -250,28 +367,28 @@ static void MiYouLiteSettingsChanged(CFNotificationCenterRef center,
 
 %ctor {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-    MYLLog(@"tweak loaded, version=1.2.8, process=%@", bid ?: @"(unknown)");
-    Class sessionMgrClass = objc_getClass("MMNewSessionMgr");
-    if (sessionMgrClass) {
-        Method mCount = class_getInstanceMethod(sessionMgrClass, @selector(GetSessionCount));
-        Method mIndex = class_getInstanceMethod(sessionMgrClass, @selector(GetSessionAtIndex:));
-        if (mCount) {
-            MSHookMessageEx(sessionMgrClass, @selector(GetSessionCount),
-                            (IMP)MiYouLite_GetSessionCount, (IMP *)&g_origGetSessionCount);
-        }
-        if (mIndex) {
-            MSHookMessageEx(sessionMgrClass, @selector(GetSessionAtIndex:),
-                            (IMP)MiYouLite_GetSessionAtIndex, (IMP *)&g_origGetSessionAtIndex);
-        }
+    MYLLog(@"tweak loaded, version=1.2.9, process=%@, log=%@", bid ?: @"(unknown)", MYLLogFile());
+
+    // 诊断：微信侧报告关键类/方法是否存在 —— 用于确认 hook 目标符号是否过时（微信 8.0.75）
+    if ([bid isEqualToString:@"com.tencent.xin"] || [bid isEqualToString:@"WeChat"]) {
+        Class cm = objc_getClass("CMessageMgr");
+        Class ccm = objc_getClass("CContactMgr");
+        Class nsm = objc_getClass("MMNewSessionMgr");
+        MYLLog(@"WeChat diag: CMessageMgr=%d onRevokeMsg=%d | CContactMgr=%d getContact=%d getAllContacts=%d | MMNewSessionMgr=%d GetSessionCount=%d GetSessionAtIndex=%d",
+            !!cm, cm && !!class_getInstanceMethod(cm, @selector(onRevokeMsg:)),
+            !!ccm, ccm && !!class_getInstanceMethod(ccm, @selector(getContact:)),
+            ccm && !!class_getInstanceMethod(ccm, @selector(getAllContacts)),
+            !!nsm, nsm && !!class_getInstanceMethod(nsm, @selector(GetSessionCount)),
+            nsm && !!class_getInstanceMethod(nsm, @selector(GetSessionAtIndex:)));
     }
-    // 设置 app 修改后热重载
+
+    MiYouLiteHookSessionMgr(); // 延迟重试安装会话 hook
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
                                     NULL,
                                     MiYouLiteSettingsChanged,
                                     CFSTR("com.miyou.lite/settings-changed"),
                                     NULL,
                                     CFNotificationSuspensionBehaviorCoalesce);
-    // 为 roothide PreferenceLoader 安装「bundle 回退」hook（确定性保险）
     MiYouLiteHookPL();
 }
 
@@ -280,25 +397,18 @@ static void MiYouLiteSettingsChanged(CFNotificationCenterRef center,
 // 该 bundle 本是点击设置项时才 lazyLoad，扫描时类可能尚未注册 → 类名解析为 nil →
 // PL 回退 PLCustomListController（其 bundle 返回 PL 目录，找不到 Root.plist → 空白）。
 // 这里在 Preferences 进程启动早期手动 load 该 bundle，使类名在 PL 扫描时可被解析。
-// （另见下方 MiYouLiteHookPL：即使预加载时序失败，也通过 hook 兜底。）
 
 static void MiYouLiteTryPreload(void) {
-    // 候选路径：roothide 的 jbroot 实际位于 /var/containers/Bundle/Application/.jbroot-*/，
-    // /var/jb 软链未必能被 NSBundle 正确识别，故动态探测真实 jbroot。
     NSMutableArray *cands = [NSMutableArray arrayWithArray:@[
         @"/Library/PreferenceBundles/MiYouLitePrefs.bundle"
     ]];
-    // 扫描 /var/containers/Bundle/Application/ 下的 .jbroot-* 目录
-    // ★ roothide 无 /var/jb，动态定位真实 jbroot，不再硬编码 /var/jb 路径。
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *appBase = @"/var/containers/Bundle/Application";
     if ([fm fileExistsAtPath:appBase]) {
-        NSArray *subs = [fm contentsOfDirectoryAtPath:appBase error:nil];
-        for (NSString *s in subs) {
+        for (NSString *s in [fm contentsOfDirectoryAtPath:appBase error:nil] ?: @[]) {
             if ([s hasPrefix:@".jbroot"]) {
-                NSString *p = [appBase stringByAppendingPathComponent:
-                    [s stringByAppendingPathComponent:@"Library/PreferenceBundles/MiYouLitePrefs.bundle"]];
-                [cands addObject:p];
+                [cands addObject:[appBase stringByAppendingPathComponent:
+                    [s stringByAppendingPathComponent:@"Library/PreferenceBundles/MiYouLitePrefs.bundle"]]];
             }
         }
     }
@@ -345,7 +455,6 @@ static NSBundle *MiYouLite_PLBundle(id self, SEL _cmd) {
         [lazy rangeOfString:@"MiYouLitePrefs"].location != NSNotFound) {
         NSMutableArray *paths = [NSMutableArray arrayWithArray:@[
             @"/Library/PreferenceBundles/MiYouLitePrefs.bundle"]];
-        // roothide 无 /var/jb，动态定位 jbroot（/var/containers/Bundle/Application/.jbroot-*/）
         NSFileManager *fm = [NSFileManager defaultManager];
         NSString *appBase = @"/var/containers/Bundle/Application";
         if ([fm fileExistsAtPath:appBase]) {

@@ -45,10 +45,73 @@ static NSString *MYLLogPath(void) {
 
 static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 // 版本号需与 control 的 Version 字段、Tweak.xm 的日志版本串保持同步
-static NSString *const kMiYouLiteVersion = @"1.2.8";
+static NSString *const kMiYouLiteVersion = @"1.2.9";
 // roothide PreferenceLoader 存储 bundle 路径的 property key（与 prefs.xm 源码一致）
 static NSString *const PLBundleKey = @"pl_bundle";
 static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
+
+#pragma mark - 跨进程共享配置（与 Tweak 共用：写裸 plist 文件，绕开 roothide 的 CFPreferences 沙盒隔离）
+static NSArray *MYLSharedConfigDirs(void) {
+    NSMutableArray *a = [NSMutableArray array];
+    NSString *appBase = @"/var/containers/Bundle/Application";
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:appBase]) {
+        for (NSString *s in [fm contentsOfDirectoryAtPath:appBase error:nil] ?: @[]) {
+            if ([s hasPrefix:@".jbroot"]) {
+                [a addObject:[appBase stringByAppendingPathComponent:
+                    [s stringByAppendingPathComponent:@"Library/Preferences"]]];
+                break;
+            }
+        }
+    }
+    [a addObject:@"/var/mobile/Library/Preferences"];
+    [a addObject:@"/tmp"];
+    return a;
+}
+static void MiYouLiteWriteSharedConfig(NSDictionary *d) {
+    if (!d) return;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *dir in MYLSharedConfigDirs()) {
+        [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *p = [dir stringByAppendingPathComponent:@"com.miyou.lite.plist"];
+        if ([d writeToFile:p atomically:YES]) { MYLLog(@"shared config written -> %@", p); return; }
+    }
+    MYLLog(@"shared config write FAILED");
+}
+
+// 把当前 CFPreferences 中的设置值镜像到共享文件，并发 Darwin 通知让微信热重载
+- (void)miYouLite_mirrorAndNotify {
+    CFStringRef domain = (__bridge CFStringRef)kMiYouLiteDomain;
+    CFPropertyListRef v;
+    BOOL anti = NO;
+    v = CFPreferencesCopyValue(CFSTR("antiRevokeEnabled"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    anti = (v && CFGetTypeID(v)==CFBooleanGetTypeID()) ? (BOOL)CFBooleanGetValue((CFBooleanRef)v) : NO;
+    if (v) CFRelease(v);
+    BOOL hide = NO;
+    v = CFPreferencesCopyValue(CFSTR("hideModeEnabled"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    hide = (v && CFGetTypeID(v)==CFBooleanGetTypeID()) ? (BOOL)CFBooleanGetValue((CFBooleanRef)v) : NO;
+    if (v) CFRelease(v);
+    NSString *pwd = @"";
+    v = CFPreferencesCopyValue(CFSTR("password"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    pwd = (v && CFGetTypeID(v)==CFStringGetTypeID()) ? (__bridge_transfer NSString *)v : @"";
+    if (v && CFGetTypeID(v)!=CFStringGetTypeID()) CFRelease(v);
+    NSString *friends = @"";
+    v = CFPreferencesCopyValue(CFSTR("hiddenFriends"), domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    friends = (v && CFGetTypeID(v)==CFStringGetTypeID()) ? (__bridge_transfer NSString *)v : @"";
+    if (v && CFGetTypeID(v)!=CFStringGetTypeID()) CFRelease(v);
+
+    NSDictionary *d = @{
+        @"antiRevokeEnabled": @(anti),
+        @"hideModeEnabled": @(hide),
+        @"password": pwd ?: @"",
+        @"hiddenFriends": friends ?: @""
+    };
+    MiYouLiteWriteSharedConfig(d);
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+        CFSTR("com.miyou.lite/settings-changed"), NULL,
+        (__bridge CFDictionaryRef)d, TRUE);
+    MYLLog(@"settings mirrored: anti=%d hide=%d pwd=%lu friends=%lu", anti, hide, (unsigned long)pwd.length, (unsigned long)friends.length);
+}
 
 @interface MiYouLitePrefsController : PSListController
 @end
@@ -152,7 +215,13 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
 
 - (void)viewDidLoad {
     MYLLog(@"viewDidLoad, bundle=%@", [self bundle]);
+    [self miYouLite_mirrorAndNotify]; // 首次打开即把当前值镜像到共享文件
     [super viewDidLoad];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [self miYouLite_mirrorAndNotify]; // 离开设置页时镜像最新值并通知微信
+    [super viewWillDisappear:animated];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -223,9 +292,7 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
                               kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
         CFPreferencesSynchronize((__bridge CFStringRef)kMiYouLiteDomain,
                                  kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
-        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                              CFSTR("com.miyou.lite/settings-changed"),
-                                              NULL, NULL, TRUE);
+        [self miYouLite_mirrorAndNotify];
         _authed = YES;
         [self reloadSpecifiers];
     }]];
@@ -239,6 +306,7 @@ static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
                           kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
     CFPreferencesSynchronize((__bridge CFStringRef)kMiYouLiteDomain,
                              kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+    [self miYouLite_mirrorAndNotify];
     [self reloadSpecifiers];
 }
 
