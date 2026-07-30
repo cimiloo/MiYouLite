@@ -365,6 +365,11 @@ static void MiYouLiteSettingsChanged(CFNotificationCenterRef center,
     MiYouLiteForceReloadSessions();
 }
 
+// 前向声明：MiYouLiteHookPL 定义在本文件靠后位置（PL 回退 hook），
+// 但 %ctor 在上方已调用它。新版 clang（Xcode runner 升级后）把
+// 「调用未声明函数（隐式函数声明）」当硬错误，故必须显式声明。
+static void MiYouLiteHookPL(void);
+
 %ctor {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
     MYLLog(@"tweak loaded, version=1.2.9, process=%@, log=%@", bid ?: @"(unknown)", MYLLogFile());
