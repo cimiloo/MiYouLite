@@ -79,6 +79,18 @@ static void MiYouLiteWriteSharedConfig(NSDictionary *d) {
     MYLLog(@"shared config write FAILED");
 }
 
+@interface MiYouLitePrefsController : PSListController
+@end
+
+@implementation MiYouLitePrefsController {
+    BOOL _authed;
+    NSArray *_mySpecifiers;
+}
+
++ (void)initialize {
+    MYLLog(@"controller class loaded: %@", NSStringFromClass(self));
+}
+
 // 把当前 CFPreferences 中的设置值镜像到共享文件，并发 Darwin 通知让微信热重载
 - (void)miYouLite_mirrorAndNotify {
     CFStringRef domain = (__bridge CFStringRef)kMiYouLiteDomain;
@@ -111,18 +123,6 @@ static void MiYouLiteWriteSharedConfig(NSDictionary *d) {
         CFSTR("com.miyou.lite/settings-changed"), NULL,
         (__bridge CFDictionaryRef)d, TRUE);
     MYLLog(@"settings mirrored: anti=%d hide=%d pwd=%lu friends=%lu", anti, hide, (unsigned long)pwd.length, (unsigned long)friends.length);
-}
-
-@interface MiYouLitePrefsController : PSListController
-@end
-
-@implementation MiYouLitePrefsController {
-    BOOL _authed;
-    NSArray *_mySpecifiers;
-}
-
-+ (void)initialize {
-    MYLLog(@"controller class loaded: %@", NSStringFromClass(self));
 }
 
 // ═══════════════════════════════════════════════
