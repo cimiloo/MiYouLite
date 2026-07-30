@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#import <objc/runtime.h>
 
 // 诊断日志：写文件，绕过系统 log 命令兼容性问题。
 // 自动选择可用目录并建目录，确保 cat 一定有输出。
@@ -45,40 +46,63 @@ static NSString *MYLLogPath(void) {
 
 static NSString *const kMiYouLiteDomain = @"com.miyou.lite";
 // 版本号需与 control 的 Version 字段、Tweak.xm 的日志版本串保持同步
-static NSString *const kMiYouLiteVersion = @"1.2.11";
+static NSString *const kMiYouLiteVersion = @"1.2.12";
 // roothide PreferenceLoader 存储 bundle 路径的 property key（与 prefs.xm 源码一致）
 static NSString *const PLBundleKey = @"pl_bundle";
 static NSString *const PSLazilyLoadedBundleKey = @"PSLazilyLoadedBundleKey";
 
-#pragma mark - 跨进程共享配置（与 Tweak 共用：写裸 plist 文件到 /rootfs 真实系统根，绕开 roothide 按 App 虚拟化）
-static NSArray *MYLSharedConfigDirs(void) {
-    NSMutableArray *a = [NSMutableArray array];
-    // ★ 优先写真实系统根 /rootfs（所有 App 共享同一物理文件）；其余仅兜底
-    [a addObject:@"/rootfs/var/mobile/Library/Preferences"];
-    NSString *appBase = @"/var/containers/Bundle/Application";
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if ([fm fileExistsAtPath:appBase]) {
-        for (NSString *s in [fm contentsOfDirectoryAtPath:appBase error:nil] ?: @[]) {
-            if ([s hasPrefix:@".jbroot"]) {
-                [a addObject:[appBase stringByAppendingPathComponent:
-                    [s stringByAppendingPathComponent:@"Library/Preferences"]]];
-                break;
+#pragma mark - 跨进程共享配置（与 Tweak 共用：写到微信容器真实 Documents，经 /var/mobile/Containers 共享 symlink 跨进程可见）
+// ★ v1.2.12：/rootfs 在微信沙盒不可访问、/var/mobile/Library/Preferences 又按 App 虚拟化，
+//   故改为「微信自身容器 Documents/com.miyou.lite.plist」作为唯一共享文件：
+//   微信读自己容器（固定可达）；设置面板用 LSApplicationProxy 找到微信容器真实路径写入同一文件。
+static NSString *MiYouLiteWeChatContainerDocs(void) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+    // 方法1：LSApplicationProxy（Preferences 进程可用）
+    Class LSApplicationProxy = objc_getClass("LSApplicationProxy");
+    if (LSApplicationProxy && [LSApplicationProxy respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
+        id proxy = [LSApplicationProxy performSelector:@selector(applicationProxyForIdentifier:) withObject:@"com.tencent.xin"];
+        if (proxy && [proxy respondsToSelector:@selector(bundleURL)]) {
+            NSURL *bundleURL = [proxy performSelector:@selector(bundleURL)];
+            NSString *path = [bundleURL path]; // .../WeChat.app
+            if (path.length) {
+                NSString *container = [path stringByDeletingLastPathComponent]; // .../<uuid>
+                return [container stringByAppendingPathComponent:@"Documents"];
             }
         }
     }
-    [a addObject:@"/var/mobile/Library/Preferences"];
-    [a addObject:@"/tmp"];
-    return a;
+    // 方法2：枚举 /var/mobile/Containers/Data/Application 找 CFBundleIdentifier==com.tencent.xin
+    NSString *base = @"/var/mobile/Containers/Data/Application";
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *uuid in [fm contentsOfDirectoryAtPath:base error:nil] ?: @[]) {
+        NSString *appDir = [base stringByAppendingPathComponent:uuid];
+        for (NSString *appName in [fm contentsOfDirectoryAtPath:appDir error:nil] ?: @[]) {
+            if (![appName hasSuffix:@".app"]) continue;
+            NSString *infoPath = [appDir stringByAppendingPathComponent:[appName stringByAppendingPathComponent:@"Info.plist"]];
+            NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
+            if ([[info objectForKey:@"CFBundleIdentifier"] isEqualToString:@"com.tencent.xin"]) {
+                return [appDir stringByAppendingPathComponent:@"Documents"];
+            }
+        }
+    }
+#pragma clang diagnostic pop
+    return nil;
 }
 static void MiYouLiteWriteSharedConfig(NSDictionary *d) {
     if (!d) return;
+    // ★ 候选写入路径（与微信读取优先级一致）：微信容器真实路径 → /var/mobile 顶层 → 虚拟化兜底
+    NSMutableArray *dirs = [NSMutableArray array];
+    NSString *wxDocs = MiYouLiteWeChatContainerDocs();
+    if (wxDocs) [dirs addObject:wxDocs];
+    [dirs addObject:@"/var/mobile"];
+    [dirs addObject:@"/var/mobile/Library/Preferences"];
     NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *dir in MYLSharedConfigDirs()) {
+    for (NSString *dir in dirs) {
         [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
         NSString *p = [dir stringByAppendingPathComponent:@"com.miyou.lite.plist"];
         if ([d writeToFile:p atomically:YES]) { MYLLog(@"shared config written -> %@", p); return; }
     }
-    MYLLog(@"shared config write FAILED");
+    MYLLog(@"shared config write FAILED（所有候选路径均不可写）");
 }
 
 @interface MiYouLitePrefsController : PSListController

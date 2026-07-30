@@ -3,6 +3,9 @@
 #import <objc/runtime.h>
 #import <substrate.h>
 #import <stdio.h>
+#import <pthread.h>
+#import <unistd.h>
+#import <errno.h>
 
 #pragma mark - 诊断日志（多候选路径，自动建目录；同时打到 syslog 便于跨沙盒验证）
 
@@ -99,46 +102,30 @@ static NSString *MYLFilterMethods(NSArray *methods, NSArray *keywords) {
 @end
 
 // ── 跨进程共享配置 ──
-// ★ 关键修复（roothide 跨进程隔离根因）：
-//   roothide 把每个 App 都关进各自的 jbroot 沙盒，/var/mobile/Library/Preferences
-//   与 .jbroot-*/Library/Preferences 都是「按 App 虚拟化」的——设置 App 写进自己
-//   jbroot 的副本，微信读自己 jbroot 的空副本，所以永远读不到对方。
-//   唯一能在所有 App 间共享的物理路径是 /rootfs/... ：roothide 官方文档明确
-//   「RootHide mounts the system root back into the jailbreak root at /rootfs/」，
-//   即 /rootfs 是真实系统根在 jbroot 视图里的挂载点，所有 App 看到的是同一份
-//   真实文件。故优先用 /rootfs/var/mobile/Library/Preferences，其余仅作兜底+诊断。
-static NSArray *MYLSharedConfigDirs(void) {
+// ★ v1.2.12 修复（roothide 跨进程隔离根因，最终方案）：
+//   /rootfs 在微信(沙盒 App)进程里访问不到（sandbox 屏蔽，诊断已证实 rootfsExists=0）；
+//   /var/mobile/Library/Preferences 是按 App 虚拟化的本地副本（官方 symlink 列表不含它）→ 不共享。
+//   roothide 官方确认「/var/mobile/Containers 在 jbroot 视图里 symlink 到真实 rootfs」，故
+//   微信容器 Documents 目录在设置 App 与微信两侧经该 symlink 指向同一真实物理文件。
+//   方案：微信读「自己容器 Documents/com.miyou.lite.plist」(100% 可达、固定)；
+//         设置面板用 LSApplicationProxy 找到微信容器真实路径写入同一文件 → 跨进程共享成立。
+static NSArray *MYLConfigCandidateDirs(void) {
     NSMutableArray *a = [NSMutableArray array];
-    // ★ 真正跨进程共享的路径：真实系统根（非虚拟化）
-    [a addObject:@"/rootfs/var/mobile/Library/Preferences"];
-    // 兜底（仅当 /rootfs 不可用时，便于诊断）
-    NSString *appBase = @"/var/containers/Bundle/Application";
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if ([fm fileExistsAtPath:appBase]) {
-        for (NSString *s in [fm contentsOfDirectoryAtPath:appBase error:nil] ?: @[]) {
-            if ([s hasPrefix:@".jbroot"]) {
-                [a addObject:[appBase stringByAppendingPathComponent:
-                    [s stringByAppendingPathComponent:@"Library/Preferences"]]];
-                break;
-            }
-        }
-    }
-    [a addObject:@"/var/mobile/Library/Preferences"];
-    [a addObject:@"/tmp"];
+    NSArray *docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    if (docs.firstObject) [a addObject:docs.firstObject]; // 微信容器 Documents（主，双方算出的真实路径一致）
+    [a addObject:@"/var/mobile"];                          // 顶层备选（官方 symlink 列表不含 → 可能共享）
+    [a addObject:@"/var/mobile/Library/Preferences"];      // 虚拟化兜底
     return a;
 }
-
+// 微信侧读取：遍历候选，返回第一个已存在的 com.miyou.lite.plist；都不存在时默认主路径
 static NSString *MYLSharedConfigFile(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *d in MYLSharedConfigDirs()) {
+    for (NSString *d in MYLConfigCandidateDirs()) {
         NSString *p = [d stringByAppendingPathComponent:@"com.miyou.lite.plist"];
         if ([fm fileExistsAtPath:p]) return p;
     }
-    for (NSString *d in MYLSharedConfigDirs()) {
-        if ([fm createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil])
-            return [d stringByAppendingPathComponent:@"com.miyou.lite.plist"];
-    }
-    return [@"/var/mobile/Library/Preferences" stringByAppendingPathComponent:@"com.miyou.lite.plist"];
+    NSString *d0 = MYLConfigCandidateDirs().firstObject;
+    return [d0 stringByAppendingPathComponent:@"com.miyou.lite.plist"];
 }
 
 static NSDictionary *MiYouLiteReadSharedConfig(void) {
@@ -250,29 +237,77 @@ static void MiYouLiteForceReloadSessions(void) {
     }
 }
 
-#pragma mark - 防撤回（微信 8.0.75 真实符号：onRevokeMsg: 已废弃，改为 RevokeMsg:MsgWrap:Counter:）
+#pragma mark - 防撤回（微信 8.0.75 真实符号：RevokeMsg:MsgWrap:Counter: / :revokeTicket:viewController:）
+// ★ 修复「自己撤回就闪退」：原 %hook + %orig 在原始实现内部 self-dispatch 同一 selector 时
+//   会无限递归 → 栈溢出崩溃。现改 MSHookMessageEx 拿原始 IMP，并在调用原始实现期间用
+//   method_setImplementation 临时把该 selector 恢复为原始实现，使原始内部的 self-dispatch
+//   也走原始（不再进 hook），递归自然终止。pthread_mutex 保护 swap+call 区间，避免并发错乱。
 
-%hook CMessageMgr
-// 微信 8.0.75 单条消息撤回入口（诊断日志已确认该方法存在）
-- (void)RevokeMsg:(id)arg1 MsgWrap:(id)arg2 Counter:(id)arg3 {
+typedef void (*OrigRevoke3)(id, SEL, id, id, id);
+typedef void (*OrigRevoke5)(id, SEL, id, id, id, id, id);
+
+static OrigRevoke3 g_origRevoke3 = NULL;
+static OrigRevoke5 g_origRevoke5 = NULL;
+static int g_revokeRetry = 0;
+static pthread_mutex_t g_revokeMutex = PTHREAD_MUTEX_INITIALIZER;
+
+// 临时恢复 selector 为原始实现后调用（避免递归），调用完再换回 hook
+static void MiYouLiteCallOrigRevoke(id self, SEL _cmd, IMP origImp, int argc, void *a1, void *a2, void *a3, void *a4, void *a5) {
+    Class cls = object_getClass(self);
+    Method m = class_getInstanceMethod(cls, _cmd);
+    if (!m || !origImp) return;
+    IMP hooked = method_getImplementation(m);
+    method_setImplementation(m, origImp);   // 临时恢复原始，原始内部 self-dispatch 同 selector 也走原始
+    if (argc == 3) ((OrigRevoke3)origImp)(self, _cmd, a1, a2, a3);
+    else           ((OrigRevoke5)origImp)(self, _cmd, a1, a2, a3, a4, a5);
+    method_setImplementation(m, hooked);    // 恢复 hook
+}
+
+static void MiYouLite_Revoke3(id self, SEL _cmd, id arg1, id arg2, id arg3) {
     MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
     if (mgr.antiRevokeEnabled) {
         MYLWeChatLog(@"*** 防撤回触发(RevokeMsg:MsgWrap:Counter:) *** msg=%@ wrap=%@", arg1, arg2);
-        return; // 拦截：不调用 %orig，撤回不生效
+        return; // 拦截：不调原始，撤回不生效
     }
     MYLWeChatLog(@"(防撤回未开启) 收到撤回请求 RevokeMsg:MsgWrap:Counter:");
-    %orig;
+    pthread_mutex_lock(&g_revokeMutex);
+    MiYouLiteCallOrigRevoke(self, _cmd, (IMP)g_origRevoke3, 3, (__bridge void*)arg1, (__bridge void*)arg2, (__bridge void*)arg3, NULL, NULL);
+    pthread_mutex_unlock(&g_revokeMutex);
 }
-// 带 revokeTicket/viewController 的重载变体（同样拦截）
-- (void)RevokeMsg:(id)arg1 MsgWrap:(id)arg2 Counter:(id)arg3 revokeTicket:(id)arg4 viewController:(id)arg5 {
+static void MiYouLite_Revoke5(id self, SEL _cmd, id arg1, id arg2, id arg3, id arg4, id arg5) {
     MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
     if (mgr.antiRevokeEnabled) {
         MYLWeChatLog(@"*** 防撤回触发(RevokeMsg:...:revokeTicket:viewController:) ***");
         return;
     }
-    %orig;
+    MYLWeChatLog(@"(防撤回未开启) 收到撤回请求 RevokeMsg:...:revokeTicket:viewController:");
+    pthread_mutex_lock(&g_revokeMutex);
+    MiYouLiteCallOrigRevoke(self, _cmd, (IMP)g_origRevoke5, 5, (__bridge void*)arg1, (__bridge void*)arg2, (__bridge void*)arg3, (__bridge void*)arg4, (__bridge void*)arg5);
+    pthread_mutex_unlock(&g_revokeMutex);
 }
-%end
+
+static void MiYouLiteHookRevoke(void) {
+    Class cls = objc_getClass("CMessageMgr");
+    if (!cls) {
+        if (g_revokeRetry++ < 60) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ MiYouLiteHookRevoke(); });
+        } else {
+            MYLLog(@"CMessageMgr 始终未加载，防撤回禁用");
+            MYLWeChatLog(@"CMessageMgr 始终未加载（30s 内），防撤回 hook 未安装");
+        }
+        return;
+    }
+    if (g_origRevoke3) return; // 已安装
+    Method m3 = class_getInstanceMethod(cls, @selector(RevokeMsg:MsgWrap:Counter:));
+    Method m5 = class_getInstanceMethod(cls, @selector(RevokeMsg:MsgWrap:Counter:revokeTicket:viewController:));
+    if (m3) MSHookMessageEx(cls, @selector(RevokeMsg:MsgWrap:Counter:),
+                            (IMP)MiYouLite_Revoke3, (IMP *)&g_origRevoke3);
+    if (m5) MSHookMessageEx(cls, @selector(RevokeMsg:MsgWrap:Counter:revokeTicket:viewController:),
+                            (IMP)MiYouLite_Revoke5, (IMP *)&g_origRevoke5);
+    MYLLog(@"Revoke hooks 已安装 (3=%d 5=%d)", m3 != nil, m5 != nil);
+    MYLWeChatLog(@"Revoke hooks 已安装 (3=%d 5=%d)", m3 != nil, m5 != nil);
+}
 
 #pragma mark - 密友 - 过滤联系人（CContactMgr.getContact:/getAllContacts，字段 m_nsUsrName）
 
@@ -446,7 +481,7 @@ static void MiYouLiteHookPL(void);
 
 %ctor {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-    MYLLog(@"tweak loaded, version=1.2.11, process=%@, log=%@", bid ?: @"(unknown)", MYLLogFile());
+    MYLLog(@"tweak loaded, version=1.2.12, process=%@, log=%@", bid ?: @"(unknown)", MYLLogFile());
 
     // 诊断：微信侧报告关键类/方法是否存在 —— 用于确认 hook 目标符号是否过时（微信 8.0.75）
     if ([bid isEqualToString:@"com.tencent.xin"] || [bid isEqualToString:@"WeChat"]) {
@@ -463,11 +498,15 @@ static void MiYouLiteHookPL(void);
         // 把诊断详情写到「微信自己的容器」，Filza 可读（无需 log stream）
         NSString *scPath = MYLSharedConfigFile();
         NSDictionary *sc = MiYouLiteReadSharedConfig();
-        MYLWeChatLog(@"==== MiYouLite 微信诊断 (version=1.2.11) ====");
-        MYLWeChatLog(@"bundleID=%@ docLog=%@", bid, MYLWeChatLogPath());
-        // ★ 逐候选目录报告 com.miyou.lite.plist 是否存在，确认 /rootfs 是否真是共享路径
-        MYLWeChatLog(@"rootfsExists=%d", (int)[[NSFileManager defaultManager] fileExistsAtPath:@"/rootfs"]);
-        for (NSString *d in MYLSharedConfigDirs()) {
+        MYLWeChatLog(@"==== MiYouLite 微信诊断 (version=1.2.12) ====");
+        MYLWeChatLog(@"bundleID=%@ docLog=%@ configFile=%@", bid, MYLWeChatLogPath(), scPath);
+        // ★ 用 POSIX access 验证 /rootfs 在微信里到底能否访问（fileExistsAtPath 可能被 sandbox 误导）
+        if (access("/rootfs/var/mobile/Library/Preferences", R_OK|W_OK) == 0)
+            MYLWeChatLog(@"rootfs_access=RW_OK");
+        else
+            MYLWeChatLog(@"rootfs_access=fail errno=%d (微信沙盒访问不到 /rootfs，已改用自身容器)", errno);
+        // ★ 关键：报告各候选路径 com.miyou.lite.plist 是否存在，确认共享文件是否被设置面板写入
+        for (NSString *d in MYLConfigCandidateDirs()) {
             NSString *p = [d stringByAppendingPathComponent:@"com.miyou.lite.plist"];
             MYLWeChatLog(@"candidate[%@] exists=%d", p,
                 (int)[[NSFileManager defaultManager] fileExistsAtPath:p]);
@@ -504,6 +543,7 @@ static void MiYouLiteHookPL(void);
     }
 
     MiYouLiteHookSessionMgr(); // 延迟重试安装会话 hook
+    MiYouLiteHookRevoke();     // 延迟重试安装防撤回 hook（MSHookMessageEx，防递归崩溃）
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
                                     NULL,
                                     MiYouLiteSettingsChanged,
