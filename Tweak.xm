@@ -264,7 +264,7 @@ static void MiYouLite_OnRevokeMsg(id self, SEL _cmd, id arg1) {
     }
     MYLWeChatLog(@"(防撤回未开启) 收到撤回请求 onRevokeMsg: arg1=%@", arg1);
     // 走原始实现（临时恢复 selector 防 self-dispatch 递归）
-    if (!g_origOnRevokeMsg) { %orig; return; }  // 兜底：不应到达
+    if (!g_origOnRevokeMsg) return;  // 未安装时静默放行（不应到达）
     pthread_mutex_lock(&g_revokeMutex);
     Class cls = object_getClass(self);
     Method m = class_getInstanceMethod(cls, _cmd);
