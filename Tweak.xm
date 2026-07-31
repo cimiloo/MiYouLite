@@ -241,54 +241,47 @@ static void MiYouLiteForceReloadSessions(void) {
     }
 }
 
-#pragma mark - 防撤回（微信 8.0.75 真实符号：RevokeMsg:MsgWrap:Counter: / :revokeTicket:viewController:）
-// ★ 修复「自己撤回就闪退」：原 %hook + %orig 在原始实现内部 self-dispatch 同一 selector 时
-//   会无限递归 → 栈溢出崩溃。现改 MSHookMessageEx 拿原始 IMP，并在调用原始实现期间用
-//   method_setImplementation 临时把该 selector 恢复为原始实现，使原始内部的 self-dispatch
-//   也走原始（不再进 hook），递归自然终止。pthread_mutex 保护 swap+call 区间，避免并发错乱。
+#pragma mark - 防撤回（目标符号 onRevokeMsg: —— 经参考插件真机实测验证有效）
+// ★ 纠正（v1.2.14）：之前 v1.2.12 根据诊断日志误判"onRevokeMsg: 已废弃/改名"，
+//   改用了 RevokeMsg:MsgWrap:Counter: 系列。但用户提供参考插件（25mao MiYou 3.9-5）
+//   的真机截图证明：该插件仅 hook onRevokeMsg: 且防撤回**实际生效**，
+//   说明用户的微信版本里 onRevokeMsg: 仍然存在且被调用。
+// ★ 仍用 MSHookMessageEx + 临时恢复 selector（v1.2.12 引入）防止可能的递归闪退；
+//   若 onRevokeMsg: 原始实现不会 self-dispatch 同 selector（参考插件用 %orig 不崩佐证），
+//   则此保护是冗余但无害的。
 
-typedef void (*OrigRevoke3)(id, SEL, void*, void*, void*);
-typedef void (*OrigRevoke5)(id, SEL, void*, void*, void*, void*, void*);
+typedef void (*OrigOnRevokeMsg)(id, SEL, id);
 
-static OrigRevoke3 g_origRevoke3 = NULL;
-static OrigRevoke5 g_origRevoke5 = NULL;
+static OrigOnRevokeMsg g_origOnRevokeMsg = NULL;
 static int g_revokeRetry = 0;
 static pthread_mutex_t g_revokeMutex = PTHREAD_MUTEX_INITIALIZER;
 
-// 临时恢复 selector 为原始实现后调用（避免递归），调用完再换回 hook
-static void MiYouLiteCallOrigRevoke(id self, SEL _cmd, IMP origImp, int argc, void *a1, void *a2, void *a3, void *a4, void *a5) {
+static void MiYouLite_OnRevokeMsg(id self, SEL _cmd, id arg1) {
+    MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
+    if (mgr.antiRevokeEnabled) {
+        MYLWeChatLog(@"*** 防撤回触发(onRevokeMsg:) *** arg1=%@", arg1);
+        return; // 拦截：不调原始实现，消息不被撤回
+    }
+    MYLWeChatLog(@"(防撤回未开启) 收到撤回请求 onRevokeMsg: arg1=%@", arg1);
+    // 走原始实现（临时恢复 selector 防 self-dispatch 递归）
+    if (!g_origOnRevokeMsg) { %orig; return; }  // 兜底：不应到达
+    pthread_mutex_lock(&g_revokeMutex);
     Class cls = object_getClass(self);
     Method m = class_getInstanceMethod(cls, _cmd);
-    if (!m || !origImp) return;
-    IMP hooked = method_getImplementation(m);
-    method_setImplementation(m, origImp);   // 临时恢复原始，原始内部 self-dispatch 同 selector 也走原始
-    if (argc == 3) ((OrigRevoke3)origImp)(self, _cmd, a1, a2, a3);
-    else           ((OrigRevoke5)origImp)(self, _cmd, a1, a2, a3, a4, a5);
-    method_setImplementation(m, hooked);    // 恢复 hook
+    if (m) {
+        IMP hooked = method_getImplementation(m);
+        method_setImplementation(m, (IMP)g_origOnRevokeMsg);
+        g_origOnRevokeMsg(self, _cmd, arg1);
+        method_setImplementation(m, hooked);
+    }
+    pthread_mutex_unlock(&g_revokeMutex);
 }
 
-static void MiYouLite_Revoke3(id self, SEL _cmd, id arg1, id arg2, id arg3) {
-    MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
-    if (mgr.antiRevokeEnabled) {
-        MYLWeChatLog(@"*** 防撤回触发(RevokeMsg:MsgWrap:Counter:) *** msg=%@ wrap=%@", arg1, arg2);
-        return; // 拦截：不调原始，撤回不生效
-    }
-    MYLWeChatLog(@"(防撤回未开启) 收到撤回请求 RevokeMsg:MsgWrap:Counter:");
-    pthread_mutex_lock(&g_revokeMutex);
-    MiYouLiteCallOrigRevoke(self, _cmd, (IMP)g_origRevoke3, 3, (__bridge void*)arg1, (__bridge void*)arg2, (__bridge void*)arg3, NULL, NULL);
-    pthread_mutex_unlock(&g_revokeMutex);
+%hook CMessageMgr
+- (void)onRevokeMsg:(id)arg1 {
+    MiYouLite_OnRevokeMsg(self, _cmd, arg1);
 }
-static void MiYouLite_Revoke5(id self, SEL _cmd, id arg1, id arg2, id arg3, id arg4, id arg5) {
-    MiYouLiteManager *mgr = [MiYouLiteManager sharedManager];
-    if (mgr.antiRevokeEnabled) {
-        MYLWeChatLog(@"*** 防撤回触发(RevokeMsg:...:revokeTicket:viewController:) ***");
-        return;
-    }
-    MYLWeChatLog(@"(防撤回未开启) 收到撤回请求 RevokeMsg:...:revokeTicket:viewController:");
-    pthread_mutex_lock(&g_revokeMutex);
-    MiYouLiteCallOrigRevoke(self, _cmd, (IMP)g_origRevoke5, 5, (__bridge void*)arg1, (__bridge void*)arg2, (__bridge void*)arg3, (__bridge void*)arg4, (__bridge void*)arg5);
-    pthread_mutex_unlock(&g_revokeMutex);
-}
+%end
 
 static void MiYouLiteHookRevoke(void) {
     Class cls = objc_getClass("CMessageMgr");
@@ -302,15 +295,14 @@ static void MiYouLiteHookRevoke(void) {
         }
         return;
     }
-    if (g_origRevoke3) return; // 已安装
-    Method m3 = class_getInstanceMethod(cls, @selector(RevokeMsg:MsgWrap:Counter:));
-    Method m5 = class_getInstanceMethod(cls, @selector(RevokeMsg:MsgWrap:Counter:revokeTicket:viewController:));
-    if (m3) MSHookMessageEx(cls, @selector(RevokeMsg:MsgWrap:Counter:),
-                            (IMP)MiYouLite_Revoke3, (IMP *)&g_origRevoke3);
-    if (m5) MSHookMessageEx(cls, @selector(RevokeMsg:MsgWrap:Counter:revokeTicket:viewController:),
-                            (IMP)MiYouLite_Revoke5, (IMP *)&g_origRevoke5);
-    MYLLog(@"Revoke hooks 已安装 (3=%d 5=%d)", m3 != nil, m5 != nil);
-    MYLWeChatLog(@"Revoke hooks 已安装 (3=%d 5=%d)", m3 != nil, m5 != nil);
+    if (g_origOnRevokeMsg) return; // 已安装
+    Method m = class_getInstanceMethod(cls, @selector(onRevokeMsg:));
+    if (m) {
+        MSHookMessageEx(cls, @selector(onRevokeMsg:),
+                        (IMP)MiYouLite_OnRevokeMsg, (IMP *)&g_origOnRevokeMsg);
+    }
+    MYLLog(@"onRevokeMsg: hook 已 installed (method=%d)", m != nil);
+    MYLWeChatLog(@"onRevokeMsg: hook 已安装 (method=%d)", m != nil);
 }
 
 #pragma mark - 密友 - 过滤联系人（CContactMgr.getContact:/getAllContacts，字段 m_nsUsrName）
@@ -485,7 +477,7 @@ static void MiYouLiteHookPL(void);
 
 %ctor {
     NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
-    MYLLog(@"tweak loaded, version=1.2.13, process=%@, log=%@", bid ?: @"(unknown)", MYLLogFile());
+    MYLLog(@"tweak loaded, version=1.2.14, process=%@, log=%@", bid ?: @"(unknown)", MYLLogFile());
 
     // 诊断：微信侧报告关键类/方法是否存在 —— 用于确认 hook 目标符号是否过时（微信 8.0.75）
     if ([bid isEqualToString:@"com.tencent.xin"] || [bid isEqualToString:@"WeChat"]) {
@@ -502,7 +494,9 @@ static void MiYouLiteHookPL(void);
         // 把诊断详情写到「微信自己的容器」，Filza 可读（无需 log stream）
         NSString *scPath = MYLSharedConfigFile();
         NSDictionary *sc = MiYouLiteReadSharedConfig();
-        MYLWeChatLog(@"==== MiYouLite 微信诊断 (version=1.2.13) ====");
+        MYLWeChatLog(@"==== MiYouLite 微信诊断 (version=1.2.14) ====");
+        // ★ 关键印证：onRevokeMsg: 是否存在（参考插件真机截图证明它有效）
+        MYLWeChatLog(@"onRevokeMsg: EXISTS=%d", cm && !!class_getInstanceMethod(cm, @selector(onRevokeMsg:)));
         NSArray *myDocs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
         MYLWeChatLog(@"WeChat自身Data容器Documents=%@", myDocs.firstObject ?: @"(nil)");
         MYLWeChatLog(@"bundleID=%@ docLog=%@ configFile=%@", bid, MYLWeChatLogPath(), scPath);
