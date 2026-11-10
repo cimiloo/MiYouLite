@@ -49,9 +49,12 @@ jobs:
         run: |
           git config user.name "ci"
           git config user.email "ci@users.noreply.github.com"
+          cp /tmp/setup.log ./setup.log 2>/dev/null || echo "no setup" > ./setup.log
+          cp /tmp/build.log ./build.log 2>/dev/null || echo "no build" > ./build.log
           git add -f JijianContacts.tipa JijianContacts.ipa setup.log build.log
           git commit -m "build: JijianContacts 产物 [skip ci]" || echo "无变化"
-          git push || true
+          git pull --rebase --autostash origin ios-contacts-build || true
+          git push origin HEAD:ios-contacts-build || echo "push 失败"
 
       - uses: actions/upload-artifact@v4
         with:
