@@ -1,0 +1,3 @@
+name: probe
+on:/n  push:/n/njobs:/n  probe:/n    runs-on: ubuntu-latest
+    steps:/n      - run: echo hello; uname -a
