@@ -1,0 +1,61 @@
+name: build-ios
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 theos 与 iOS SDK
+        run: |
+          brew install ldid xz || true
+          export THEOS=$HOME/theos
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+          mkdir -p "$THEOS/sdks"
+          curl -sSL -o /tmp/sdk.tar.xz https://github.com/theos/sdks/raw/master/iPhoneOS16.5.sdk.tar.xz
+          tar -xf /tmp/sdk.tar.xz -C "$THEOS/sdks"
+          ls "$THEOS/sdks"
+
+      - name: 编译
+        run: |
+          export THEOS=$HOME/theos
+          export PATH="$THEOS/bin:$PATH"
+          make clean || true
+          make 2>&1 | tail -40
+          find .theos -maxdepth 4 -name "*.app" -type d
+
+      - name: 打包 tipa / ipa
+        run: |
+          APP=$(find .theos -maxdepth 5 -name "*.app" -type d | head -1)
+          echo "APP=$APP"
+          test -n "$APP" || (echo "no .app produced" && exit 1)
+          APPNAME=$(basename "$APP" .app)
+          rm -rf Payload && mkdir -p Payload
+          cp -R "$APP" Payload/
+          # 伪签名，TrollStore 安装时会用自己的证书重签
+          ldid -S "Payload/$APPNAME/$APPNAME" || true
+          zip -qry JijianContacts.tipa Payload
+          cp JijianContacts.tipa JijianContacts.ipa
+          ls -la *.tipa *.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jijian-contacts-ipa
+          path: |
+            JijianContacts.tipa
+            JijianContacts.ipa
+
+      - name: 发布到 Release（便于匿名下载）
+        uses: softprops/action-gh-release@v2
+        with:
+          tag: build-${{ github.run_number }}
+          name: JijianContacts build ${{ github.run_number }}
+          files: |
+            JijianContacts.tipa
+            JijianContacts.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
