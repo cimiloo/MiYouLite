@@ -9,17 +9,17 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
       - name: 安装 theos 与工具链
-        id: setup
-        continue-on-error: true
         run: |
+          set +e
           bash scripts/setup-theos.sh > /tmp/setup.log 2>&1
           echo "SETUP_EXIT=$?" >> /tmp/setup.log
-          tail -40 /tmp/setup.log
+          tail -50 /tmp/setup.log
+          grep -q "SETUP DONE" /tmp/setup.log || exit 1
 
       - name: 回传安装日志
         if: always()
@@ -27,30 +27,28 @@ jobs:
           cp /tmp/setup.log ./setup.log 2>/dev/null || echo "no setup.log" > ./setup.log
           git config user.name "ci"
           git config user.email "ci@users.noreply.github.com"
-          git add -f setup.log
-          git commit -m "ci: setup log" || true
+          git add -f setup.log && git commit -m "ci: setup log" || true
           git push || true
 
       - name: 编译
-        if: steps.setup.outcome == 'success'
         run: |
           export THEOS="$GITHUB_WORKSPACE/theos"
           export PATH="$THEOS/bin:$PATH"
           make clean || true
-          make 2>&1 | tee /tmp/build.log | tail -60
-          echo "--- 产物 ---"
+          set +e
+          make > /tmp/build.log 2>&1
+          echo "BUILD_EXIT=$?" >> /tmp/build.log
+          tail -50 /tmp/build.log
           find .theos -maxdepth 5 -name "*.app" -type d
 
       - name: 回传编译日志
-        if: always() && steps.setup.outcome == 'success'
+        if: always()
         run: |
           cp /tmp/build.log ./build.log 2>/dev/null || echo "no build.log" > ./build.log
-          git add -f build.log
-          git commit -m "ci: build log" || true
+          git add -f build.log && git commit -m "ci: build log" || true
           git push || true
 
       - name: 打包 tipa / ipa
-        if: steps.setup.outcome == 'success'
         run: |
           APP=$(find .theos -maxdepth 5 -name "*.app" -type d | head -1)
           echo "APP=$APP"
@@ -64,7 +62,6 @@ jobs:
           ls -la *.tipa *.ipa
 
       - uses: actions/upload-artifact@v4
-        if: steps.setup.outcome == 'success'
         with:
           name: jijian-contacts-ipa
           path: |
@@ -72,7 +69,6 @@ jobs:
             JijianContacts.ipa
 
       - name: 发布到 Release
-        if: steps.setup.outcome == 'success'
         uses: softprops/action-gh-release@v2
         with:
           tag: build-${{ github.run_number }}
