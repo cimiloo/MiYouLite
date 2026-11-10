@@ -1,0 +1,69 @@
+===== 系统 =====
+PRETTY_NAME="Ubuntu 22.04.5 LTS"
+NAME="Ubuntu"
+VERSION_ID="22.04"
+Linux runnervmlby3q 6.8.0-1070-azure #78~22.04.1-Ubuntu SMP Thu Sep 24 18:46:45 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+===== apt 依赖 =====
+ok   build-essential
+ok   fakeroot
+ok   rsync
+ok   curl
+ok   perl
+ok   zip
+ok   git
+ok   libtinfo5
+ok   libtinfo6
+ok   libz3-dev
+ok   libplist-utils
+ok   wget
+ok   xz-utils
+ok   unzip
+ok   libxml2
+===== 克隆 theos =====
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos'...
+Submodule 'vendor/dm.pl' (https://github.com/theos/dm.pl.git) registered for path 'vendor/dm.pl'
+Submodule 'vendor/include' (https://github.com/theos/headers.git) registered for path 'vendor/include'
+Submodule 'vendor/lib' (https://github.com/theos/lib.git) registered for path 'vendor/lib'
+Submodule 'vendor/logos' (https://github.com/theos/logos.git) registered for path 'vendor/logos'
+Submodule 'vendor/nic' (https://github.com/theos/nic.git) registered for path 'vendor/nic'
+Submodule 'vendor/orion' (https://github.com/theos/orion.git) registered for path 'vendor/orion'
+Submodule 'vendor/swift-support' (https://github.com/theos/swift-support.git) registered for path 'vendor/swift-support'
+Submodule 'vendor/templates' (https://github.com/theos/templates.git) registered for path 'vendor/templates'
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/dm.pl'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/include'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/lib'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/logos'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/nic'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/orion'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/swift-support'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/templates'...
+Submodule path 'vendor/dm.pl': checked out 'd9a3b72e274226dd2823c0a7c1d6d05099f4f51c'
+Submodule path 'vendor/include': checked out '25ef5c99a31d600cf3a7b88922c1f7a4029c1417'
+Submodule path 'vendor/lib': checked out '6f2af307568e6b8c52181d26314b0cd69ffaf188'
+Submodule path 'vendor/logos': checked out '365a4e7028234e90bc2cbc724e5c87607130d3b3'
+Submodule path 'vendor/nic': checked out '4e7adcbeac2e4636b91e2f76341adfe4c4d0ceec'
+Submodule path 'vendor/orion': checked out '762159dc214d5aafa2edfc7554c659fc3c658b5b'
+Submodule 'fishhook' (https://github.com/facebook/fishhook.git) registered for path 'vendor/orion/fishhook'
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/orion/fishhook'...
+Submodule path 'vendor/orion/fishhook': checked out 'aadc161ac3b80db07a9908851839a17ba63a9eb1'
+Submodule path 'vendor/swift-support': checked out '4cf59ff04cdb2ceb27ea2228753e0497297b6182'
+Submodule path 'vendor/templates': checked out '6c3944e281c4726f1383755d0fbb642840312d28'
+aggregate.mk
+appex.mk
+application.mk
+bundle.mk
+common.mk
+===== iOS toolchain =====
+-- toolchain 内容 --
+total 8
+drwxr-xr-x  2 runner runner 4096 Nov 10 07:54 .
+drwxr-xr-x 15 runner runner 4096 Nov 10 07:54 ..
+-rw-r--r--  1 runner runner    0 Nov 10 07:54 .keep
+===== iOS SDK =====
+-- SDK 列表 --
+===== 工具检查 =====
+clang    /usr/bin/clang
+make     /usr/bin/make
+ldid     （缺失）
+===== SETUP DONE =====
+SETUP_EXIT=0
