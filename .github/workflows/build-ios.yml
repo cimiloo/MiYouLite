@@ -4,39 +4,67 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 theos 与 iOS SDK
-        uses: Randomblock1/theos-action@v1
+      - name: 安装 theos 与工具链
+        id: setup
+        continue-on-error: true
+        run: |
+          bash scripts/setup-theos.sh > /tmp/setup.log 2>&1
+          echo "SETUP_EXIT=$?" >> /tmp/setup.log
+          tail -40 /tmp/setup.log
+
+      - name: 回传安装日志
+        if: always()
+        run: |
+          cp /tmp/setup.log ./setup.log 2>/dev/null || echo "no setup.log" > ./setup.log
+          git config user.name "ci"
+          git config user.email "ci@users.noreply.github.com"
+          git add -f setup.log
+          git commit -m "ci: setup log" || true
+          git push || true
 
       - name: 编译
+        if: steps.setup.outcome == 'success'
         run: |
           export THEOS="$GITHUB_WORKSPACE/theos"
           export PATH="$THEOS/bin:$PATH"
           make clean || true
-          make 2>&1 | tail -60
+          make 2>&1 | tee /tmp/build.log | tail -60
           echo "--- 产物 ---"
           find .theos -maxdepth 5 -name "*.app" -type d
 
+      - name: 回传编译日志
+        if: always() && steps.setup.outcome == 'success'
+        run: |
+          cp /tmp/build.log ./build.log 2>/dev/null || echo "no build.log" > ./build.log
+          git add -f build.log
+          git commit -m "ci: build log" || true
+          git push || true
+
       - name: 打包 tipa / ipa
+        if: steps.setup.outcome == 'success'
         run: |
           APP=$(find .theos -maxdepth 5 -name "*.app" -type d | head -1)
           echo "APP=$APP"
-          if [ -z "$APP" ]; then echo "no .app produced"; exit 1; fi
+          if [ -z "$APP" ]; then echo "没有产出 .app"; exit 1; fi
           APPNAME=$(basename "$APP" .app)
           rm -rf Payload && mkdir -p Payload
           cp -R "$APP" Payload/
           if command -v ldid >/dev/null; then ldid -S "Payload/$APPNAME/$APPNAME" || true; fi
           zip -qry JijianContacts.tipa Payload
           cp JijianContacts.tipa JijianContacts.ipa
-          ls -la Payload/"$APPNAME" | head -20
           ls -la *.tipa *.ipa
 
       - uses: actions/upload-artifact@v4
+        if: steps.setup.outcome == 'success'
         with:
           name: jijian-contacts-ipa
           path: |
@@ -44,6 +72,7 @@ jobs:
             JijianContacts.ipa
 
       - name: 发布到 Release
+        if: steps.setup.outcome == 'success'
         uses: softprops/action-gh-release@v2
         with:
           tag: build-${{ github.run_number }}
