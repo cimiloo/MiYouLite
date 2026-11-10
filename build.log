@@ -1,3 +1,0 @@
-[0;31m==> [1;31mError:[m You do not have any SDKs in /home/runner/work/MiYouLite/MiYouLite/theos/sdks.
-make: *** [/home/runner/work/MiYouLite/MiYouLite/theos/makefiles/targets/_common/darwin_head.mk:117: before-all] Error 1
-BUILD_EXIT=2
