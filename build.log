@@ -1,0 +1,12 @@
+[1;31m> [1;3;39mMaking all for application JijianContacts…[m
+[0;35m==> [1;39mCopying resource directories into the application wrapper…[m
+[0;32m==> [1;39mCompiling AppDelegate.m (arm64)…[m
+[0;32m==> [1;39mCompiling MainViewController.m (arm64)…[m
+[0;32m==> [1;39mCompiling JJData.m (arm64)…[m
+[0;32m==> [1;39mCompiling DeptViewController.m (arm64)…[m
+[0;32m==> [1;39mCompiling JJToast.m (arm64)…[m
+[0;32m==> [1;39mCompiling main.m (arm64)…[m
+[0;33m==> [1;39mLinking application JijianContacts (arm64)…[m
+[0;34m==> [1;39mStripping JijianContacts (arm64)…[m
+[0;34m==> [1;39mSigning JijianContacts…[m
+BUILD_EXIT=0
