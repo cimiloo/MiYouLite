@@ -42,11 +42,14 @@ find "$THEOS/toolchain" -maxdepth 2 -type d | head -10
 echo "===== iOS SDK ====="
 mkdir -p "$THEOS/sdks"
 if ! ls "$THEOS"/sdks/*.sdk >/dev/null 2>&1; then
-  echo "下载 iPhoneOS16.5.sdk ..."
-  wget --no-verbose -O /tmp/sdk.tar.xz \
-    https://github.com/theos/sdks/raw/master/iPhoneOS16.5.sdk.tar.xz
-  echo "下载结果: $? 大小: $(stat -c%s /tmp/sdk.tar.xz 2>/dev/null) 字节"
-  tar -xf /tmp/sdk.tar.xz -C "$THEOS/sdks" || { echo "SDK 解压失败"; FAIL=1; }
+  echo "稀疏检出 iPhoneOS16.5.sdk ..."
+  rm -rf /tmp/sdksrepo
+  git clone --depth 1 --filter=blob:none --sparse https://github.com/theos/sdks.git /tmp/sdksrepo || { echo "SDK 仓库克隆失败"; FAIL=1; }
+  if [ -d /tmp/sdksrepo ]; then
+    ( cd /tmp/sdksrepo && git sparse-checkout set iPhoneOS16.5.sdk ) || { echo "稀疏检出失败"; FAIL=1; }
+    du -sh /tmp/sdksrepo/iPhoneOS16.5.sdk 2>/dev/null || true
+    cp -R /tmp/sdksrepo/iPhoneOS16.5.sdk "$THEOS/sdks/" || { echo "SDK 拷贝失败"; FAIL=1; }
+  fi
 else
   echo "SDK 已存在，跳过"
 fi
