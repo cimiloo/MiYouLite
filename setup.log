@@ -1,0 +1,79 @@
+===== 系统 =====
+PRETTY_NAME="Ubuntu 22.04.5 LTS"
+NAME="Ubuntu"
+VERSION_ID="22.04"
+===== apt 依赖 =====
+ok   build-essential
+ok   fakeroot
+ok   rsync
+ok   curl
+ok   perl
+ok   zip
+ok   git
+ok   libtinfo5
+ok   libtinfo6
+ok   libz3-dev
+ok   libplist-utils
+ok   wget
+ok   xz-utils
+ok   unzip
+ok   libxml2
+===== 克隆 theos =====
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos'...
+Submodule 'vendor/dm.pl' (https://github.com/theos/dm.pl.git) registered for path 'vendor/dm.pl'
+Submodule 'vendor/include' (https://github.com/theos/headers.git) registered for path 'vendor/include'
+Submodule 'vendor/lib' (https://github.com/theos/lib.git) registered for path 'vendor/lib'
+Submodule 'vendor/logos' (https://github.com/theos/logos.git) registered for path 'vendor/logos'
+Submodule 'vendor/nic' (https://github.com/theos/nic.git) registered for path 'vendor/nic'
+Submodule 'vendor/orion' (https://github.com/theos/orion.git) registered for path 'vendor/orion'
+Submodule 'vendor/swift-support' (https://github.com/theos/swift-support.git) registered for path 'vendor/swift-support'
+Submodule 'vendor/templates' (https://github.com/theos/templates.git) registered for path 'vendor/templates'
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/dm.pl'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/include'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/lib'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/logos'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/nic'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/orion'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/swift-support'...
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/templates'...
+Submodule path 'vendor/dm.pl': checked out 'd9a3b72e274226dd2823c0a7c1d6d05099f4f51c'
+Submodule path 'vendor/include': checked out '25ef5c99a31d600cf3a7b88922c1f7a4029c1417'
+Submodule path 'vendor/lib': checked out '6f2af307568e6b8c52181d26314b0cd69ffaf188'
+Submodule path 'vendor/logos': checked out '365a4e7028234e90bc2cbc724e5c87607130d3b3'
+Submodule path 'vendor/nic': checked out '4e7adcbeac2e4636b91e2f76341adfe4c4d0ceec'
+Submodule path 'vendor/orion': checked out '762159dc214d5aafa2edfc7554c659fc3c658b5b'
+Submodule 'fishhook' (https://github.com/facebook/fishhook.git) registered for path 'vendor/orion/fishhook'
+Cloning into '/home/runner/work/MiYouLite/MiYouLite/theos/vendor/orion/fishhook'...
+Submodule path 'vendor/orion/fishhook': checked out 'aadc161ac3b80db07a9908851839a17ba63a9eb1'
+Submodule path 'vendor/swift-support': checked out '4cf59ff04cdb2ceb27ea2228753e0497297b6182'
+Submodule path 'vendor/templates': checked out '6c3944e281c4726f1383755d0fbb642840312d28'
+aggregate.mk
+appex.mk
+application.mk
+===== iOS toolchain =====
+下载 swift toolchain ...
+2026-11-10 08:02:05 URL:https://release-assets.githubusercontent.com/github-production-release-asset/147025510/f479c31d-c8ac-4a7a-ba83-96d28138c8d6?sp=r&sv=2018-11-09&sr=b&spr=https&se=2026-11-10T08%3A50%3A47Z&rscd=attachment%3B+filename%3Dswift-5.8-ubuntu22.04.tar.xz&rsct=application%2Foctet-stream&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2026-11-10T07%3A50%3A01Z&ske=2026-11-10T08%3A50%3A47Z&sks=b&skv=2018-11-09&sig=Ny%2BOuKHboOQaxKCSYvoLP9z6aoOtLPqkc3LMc3VIZvU%3D&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmVsZWFzZS1hc3NldHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwia2V5Ijoia2V5MSIsImV4cCI6MTc5NDMwMTMyMSwibmJmIjoxNzk0Mjk3NzIxLCJwYXRoIjoicmVsZWFzZWFzc2V0cHJvZHVjdGlvbi5ibG9iLmNvcmUud2luZG93cy5uZXQifQ.0iAmL6hcodmIoi8q4wVDZ1gOJJt0aUL3Ad3K5Ih2Ons&response-content-disposition=attachment%3B%20filename%3Dswift-5.8-ubuntu22.04.tar.xz&response-content-type=application%2Foctet-stream [650297896/650297896] -> "/tmp/tc.tar.xz" [1]
+下载结果: 0 大小: 650297896 字节
+-- toolchain 内容 --
+/home/runner/work/MiYouLite/MiYouLite/theos/toolchain
+/home/runner/work/MiYouLite/MiYouLite/theos/toolchain/linux
+/home/runner/work/MiYouLite/MiYouLite/theos/toolchain/linux/iphone
+/home/runner/work/MiYouLite/MiYouLite/theos/toolchain/linux/host
+===== iOS SDK =====
+稀疏检出 iPhoneOS16.5.sdk ...
+Cloning into '/tmp/sdksrepo'...
+233M	/tmp/sdksrepo/iPhoneOS16.5.sdk
+-- SDK 列表 --
+iPhoneOS16.5.sdk
+===== ldid =====
+2026-11-10 08:03:07 URL:https://release-assets.githubusercontent.com/github-production-release-asset/415716398/4e0e9619-5721-4163-943e-82bca4c7b0c5?sp=r&sv=2018-11-09&sr=b&spr=https&se=2026-11-10T08%3A53%3A19Z&rscd=attachment%3B+filename%3Dldid_linux_x86_64&rsct=application%2Foctet-stream&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2026-11-10T07%3A52%3A29Z&ske=2026-11-10T08%3A53%3A19Z&sks=b&skv=2018-11-09&sig=MZhm%2BIqjxz7iDNVXeCirvgXyhHpF2y7ihar93nbpI1E%3D&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmVsZWFzZS1hc3NldHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwia2V5Ijoia2V5MSIsImV4cCI6MTc5NDI5ODA4NywibmJmIjoxNzk0Mjk3Nzg3LCJwYXRoIjoicmVsZWFzZWFzc2V0cHJvZHVjdGlvbi5ibG9iLmNvcmUud2luZG93cy5uZXQifQ.xn___e__yqQtf396cn9dLAvAXyHP6HtQTbHExSyHiV0&response-content-disposition=attachment%3B%20filename%3Dldid_linux_x86_64&response-content-type=application%2Foctet-stream [2956104/2956104] -> "/tmp/ldid" [1]
+ldid 已安装
+===== 工具检查 =====
+clang    /usr/bin/clang
+make     /usr/bin/make
+ldid     /usr/local/bin/ldid
+/home/runner/work/MiYouLite/MiYouLite/theos/toolchain/linux/iphone/share/man/man1/ld64.1
+/home/runner/work/MiYouLite/MiYouLite/theos/toolchain/linux/iphone/bin/ld64.lld
+/home/runner/work/MiYouLite/MiYouLite/theos/toolchain/linux/host/bin/ld64.lld
+===== SETUP DONE =====
+SETUP_EXIT=0
